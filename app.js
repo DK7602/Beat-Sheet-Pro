@@ -1,4 +1,4 @@
-/* Beat Sheet Pro - app.js (FULL REPLACE v_IDB_AUDIO_PAGER_CARDS_CARDPLUS_AUTOSCROLL_v3) */
+/* Beat Sheet Pro - app.js (FULL REPLACE v_IDB_AUDIO_PAGER_CARDS_CARDPLUS_AUTOSCROLL_v4_TEXTPAGES) */
 (() => {
 "use strict";
 
@@ -171,7 +171,6 @@ function updateAutoScrollBtn(){
 function setAutoScroll(v){
   autoScrollOn = !!v;
   lastAutoScrollToken = null;
-  // when switching modes, clear previous visual state so the new mode looks correct immediately
   clearAllPracticeAndActive();
   saveAutoScroll(autoScrollOn);
   updateAutoScrollBtn();
@@ -890,13 +889,11 @@ function playHat(atTime = null, amp = 0.18){
 
 /***********************
 ✅ ACTIVE BAR + HIGHLIGHT ENGINE
-Fix #2: AutoScroll ON cycles bars + scrolls
-Fix #3: AutoScroll OFF ticks ALL cards on active page
+Fix: AutoScroll ON now advances to the NEXT SECTION that has TEXT in a card (skips empty cards/sections).
+AutoScroll OFF unchanged (ticks all cards on current page).
 ***********************/
 let lastActiveBarKey = null;
 let lastActiveBarIdx = -1;
-
-// only scroll once per bar
 let lastAutoScrollToken = null;
 
 function getActiveRealPageEl(pageKey){
@@ -910,12 +907,6 @@ function clearOldActiveBar(){
     oldPage.querySelectorAll(".bar.barActive").forEach(el=>el.classList.remove("barActive"));
     oldPage.querySelectorAll(".beat.flash").forEach(el=>el.classList.remove("flash"));
   }
-}
-
-function clearFlashesOnPage(pageKey){
-  const page = getActiveRealPageEl(pageKey);
-  if(!page) return;
-  page.querySelectorAll(".beat.flash").forEach(el=>el.classList.remove("flash"));
 }
 
 function setActiveBarDOM(pageKey, barIdx){
@@ -942,12 +933,8 @@ function findVerticalScroller(startEl){
     if(canScrollY) return el;
     el = el.parentElement;
   }
-
-  // fallback: try the active page itself
   const page = startEl?.closest?.(".page");
   if(page && page.scrollHeight > page.clientHeight + 2) return page;
-
-  // last resort
   return document.scrollingElement || document.documentElement;
 }
 
@@ -977,7 +964,6 @@ function scrollBarIntoView(barEl){
   }
 }
 
-
 function flashBeatOnBar(barEl, beatInBar){
   if(!barEl) return;
   const beats = barEl.querySelectorAll(".beat");
@@ -993,10 +979,8 @@ function flashBeatOnAllBars(pageKey, beatInBar){
   const page = getActiveRealPageEl(pageKey);
   if(!page) return;
 
-  // no "active bar" in this mode
   page.querySelectorAll(".bar.barActive").forEach(b=>b.classList.remove("barActive"));
 
-  // flash the same beat box on every bar card
   const bars = page.querySelectorAll(".bar");
   bars.forEach(bar=>{
     const beats = bar.querySelectorAll(".beat");
@@ -1014,20 +998,85 @@ function flashBeatOnAllBars(pageKey, beatInBar){
   }, 90);
 }
 
-function syncHighlightAndScroll(pageKey, barIdx, beatInBar){
+function clearAllPracticeAndActive(){
+  document.querySelectorAll(".bar.barActive").forEach(b=>b.classList.remove("barActive"));
+  document.querySelectorAll(".beat.flash").forEach(b=>b.classList.remove("flash"));
+  lastActiveBarKey = null;
+  lastActiveBarIdx = -1;
+  lastAutoScrollToken = null;
+}
+
+/*************
+✅ NEW: build "play sequence" of ONLY text cards across all sections
+*************/
+let playSeqCache = { projId:null, updatedAt:null, seq:[] };
+
+function barHasText(bar){
+  const t = (bar?.text ?? "");
+  return String(t).trim().length > 0;
+}
+
+function getPlaySequence(p){
+  const u = p?.updatedAt || "";
+  if(playSeqCache.projId === p?.id && playSeqCache.updatedAt === u && Array.isArray(playSeqCache.seq)){
+    return playSeqCache.seq;
+  }
+
+  const seq = [];
+  for(const secKey of FULL_ORDER){
+    const bars = p?.sections?.[secKey]?.bars || [];
+    for(let i=0;i<bars.length;i++){
+      if(barHasText(bars[i])) seq.push({ secKey, barIdx:i });
+    }
+  }
+
+  playSeqCache = { projId: p?.id || null, updatedAt: u, seq };
+  return seq;
+}
+
+function gotoSectionKey(p, secKey, behavior="auto"){
+  if(!p || !secKey || !PAGE_ORDER.includes(secKey)) return;
+
+  if(p.activeSection !== secKey){
+    p.activeSection = secKey;
+    touchProject(p);
+  }
+
+  const pager = document.getElementById("pagesPager");
+  if(pager){
+    const realIdx = Math.max(0, PAGE_ORDER.indexOf(secKey));
+    snapToIdx(pager, realIdx + 1, behavior);
+  }
+
+  lastAutoScrollToken = null;
+}
+
+/*************
+✅ highlight driver (now supports global text sequence)
+*************/
+function syncHighlightAndScroll(pageKey, globalBarIdx, beatInBar){
   const p = getActiveProject();
-  if(!p || !pageKey) return;
+  if(!p) return;
 
-  if(pageKey === "full") return;
-
-  const sec = p.sections?.[pageKey];
-  const count = sec?.bars?.length || 1;
-  const safeBarIdx = count ? (barIdx % count) : 0;
   const safeBeat = Math.max(0, Math.min(3, beatInBar|0));
 
-  // ✅ FIX #3: AutoScroll OFF = tick-highlight ALL cards on the page
+  // FULL page doesn't participate in autoscroll highlighting
+  if(pageKey === "full" && autoScrollOn){
+    // if user is on FULL while autoscrolling, jump to first text section if possible
+    const seq = getPlaySequence(p);
+    if(seq.length){
+      gotoSectionKey(p, seq[0].secKey, "auto");
+      pageKey = p.activeSection;
+      globalBarIdx = 0;
+    }else{
+      return;
+    }
+  }else if(pageKey === "full"){
+    return;
+  }
+
+  // ✅ FIX #3: AutoScroll OFF = tick-highlight ALL cards on the active page (unchanged)
   if(!autoScrollOn){
-    // avoid cross-page leftovers
     if(lastActiveBarKey && lastActiveBarKey !== pageKey) clearOldActiveBar();
     lastActiveBarKey = pageKey;
     lastActiveBarIdx = -1;
@@ -1037,26 +1086,49 @@ function syncHighlightAndScroll(pageKey, barIdx, beatInBar){
     return;
   }
 
-  // ✅ AutoScroll ON = active bar cycles + scrolls
-  const barEl = setActiveBarDOM(pageKey, safeBarIdx);
+  // ✅ AutoScroll ON = use text-only sequence across sections
+  const seq = getPlaySequence(p);
+
+  // fallback: if no text cards exist, just behave like old per-section loop
+  if(!seq.length){
+    const sec = p.sections?.[pageKey];
+    const count = sec?.bars?.length || 1;
+    const safeBarIdx = count ? (globalBarIdx % count) : 0;
+
+    const barEl = setActiveBarDOM(pageKey, safeBarIdx);
+    if(barEl) flashBeatOnBar(barEl, safeBeat);
+
+    if(barEl && safeBeat === 0){
+      const token = `${pageKey}:${safeBarIdx}`;
+      if(token !== lastAutoScrollToken){
+        lastAutoScrollToken = token;
+        requestAnimationFrame(()=>scrollBarIntoView(barEl));
+      }
+    }
+    return;
+  }
+
+  const idx = ((globalBarIdx % seq.length) + seq.length) % seq.length;
+  const target = seq[idx];
+  if(!target) return;
+
+  // ensure we are on the right page (auto-advance pages that have text)
+  if(p.activeSection !== target.secKey){
+    gotoSectionKey(p, target.secKey, "smooth");
+    clearAllPracticeAndActive();
+  }
+
+  const barEl = setActiveBarDOM(target.secKey, target.barIdx);
   if(barEl) flashBeatOnBar(barEl, safeBeat);
 
-  // scroll once per bar on beat 1
+  // scroll once per (section,bar) on beat 1
   if(barEl && safeBeat === 0){
-    const token = `${pageKey}:${safeBarIdx}`;
+    const token = `${target.secKey}:${target.barIdx}`;
     if(token !== lastAutoScrollToken){
       lastAutoScrollToken = token;
       requestAnimationFrame(()=>scrollBarIntoView(barEl));
     }
   }
-}
-
-function clearAllPracticeAndActive(){
-  document.querySelectorAll(".bar.barActive").forEach(b=>b.classList.remove("barActive"));
-  document.querySelectorAll(".beat.flash").forEach(b=>b.classList.remove("flash"));
-  lastActiveBarKey = null;
-  lastActiveBarIdx = -1;
-  lastAutoScrollToken = null;
 }
 
 /***********************
@@ -1603,8 +1675,6 @@ function buildPager(p){
     }
 
     const title = (SECTION_DEFS.find(s=>s.key===key)?.title || key).toUpperCase();
-
-    // ✅ Fix #1: NO top "Bar +" button. Add happens via + on each card.
     page.innerHTML = `<div class="pageTitle">${escapeHtml(title)}</div>`;
 
     const mount = document.createElement("div");
@@ -1643,10 +1713,7 @@ function setActiveSectionFromIdx(p, idx){
     p.activeSection = key;
     touchProject(p);
 
-    // important for autoscroll scroll-per-bar
     lastAutoScrollToken = null;
-
-    // when changing pages in non-autoscroll practice, clear old flashes
     clearAllPracticeAndActive();
   }
 }
@@ -1756,7 +1823,6 @@ function setupCarouselPager(pagerEl, p){
 
 /***********************
 ✅ bar rendering helper
-Fix #1: "+" exists on EVERY card and is just "+"
 ***********************/
 function renderSectionBarsInto(p, sectionKey, mountEl){
   const sec = p.sections[sectionKey];
@@ -1847,6 +1913,9 @@ function renderSectionBarsInto(p, sectionKey, mountEl){
       bar.text = text;
       touchProject(p);
 
+      // invalidate play-sequence cache immediately (so autoscroll reacts instantly)
+      playSeqCache.updatedAt = null;
+
       const newN = countSyllablesLine(text);
       syllVal.textContent = newN ? String(newN) : "";
       syllPill.classList.remove("red","yellow","green");
@@ -1875,7 +1944,6 @@ function renderSectionBarsInto(p, sectionKey, mountEl){
 
 /***********************
 ✅ add/delete bar actions (delegation)
-Fix #1: ONLY card-based plus remains
 ***********************/
 document.addEventListener("click", (e)=>{
   const btn = e.target.closest("[data-action]");
@@ -1951,6 +2019,7 @@ function renderBars(){
     const commit = () => {
       applyFullTextToProject(p, fullTa.value || "");
       syncSectionCardsFromProject(p);
+      playSeqCache.updatedAt = null;
     };
 
     const refresh = () => { updateRhymesFromFullCaret(fullTa); updateDockForKeyboard(); };
