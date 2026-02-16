@@ -55,6 +55,7 @@ const els = {
 
   headerToggle: need("headerToggle"),
   headerToggle2: need("headerToggle2"),
+  refreshBtn: need("refreshBtn"),
 
   bars: need("bars"),
 
@@ -355,6 +356,10 @@ function setHeaderCollapsed(isCol){
 }
 els.headerToggle?.addEventListener("click", ()=>setHeaderCollapsed(!isCollapsed()));
 els.headerToggle2?.addEventListener("click", ()=>setHeaderCollapsed(!isCollapsed()));
+els.refreshBtn?.addEventListener("click", ()=>{
+  showToast("Refreshing…");
+  setTimeout(()=>location.reload(), 150);
+});
 
 /***********************
 ✅ Keep rhyme dock visible above keyboard (Android)
