@@ -1406,7 +1406,11 @@ let micGain = null;
 async function ensureMic(){
   if(micStream) return;
   micStream = await navigator.mediaDevices.getUserMedia({
-  audio: { echoCancellation:true, noiseSuppression:true, autoGainControl:false }
+  audio: {
+    echoCancellation: false,
+    noiseSuppression: false,
+    autoGainControl: false
+  }
 });
   ensureAudio();
   micSource = audioCtx.createMediaStreamSource(micStream);
