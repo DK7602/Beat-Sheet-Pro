@@ -797,7 +797,7 @@ function ensureAudio(){
     audioCtx = new (window.AudioContext || window.webkitAudioContext)();
 
     metroGain = audioCtx.createGain();
-    metroGain.gain.value = 1.4;
+    metroGain.gain.value = 1.8;
 
     playbackGain = audioCtx.createGain();
     playbackGain.gain.value = 1.0;
