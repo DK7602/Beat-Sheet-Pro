@@ -1472,7 +1472,7 @@ async function startRecording(){
   const mimeType = pickBestMime();
   const opts = {};
   if(mimeType) opts.mimeType = mimeType;
-  opts.audioBitsPerSecond = 64000;
+  opts.audioBitsPerSecond = 160000;
 
   recorder = new MediaRecorder(recordDest.stream, opts);
 
