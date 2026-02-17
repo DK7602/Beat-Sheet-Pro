@@ -804,11 +804,17 @@ function ensureAudio(){
 
     recordDest = audioCtx.createMediaStreamDestination();
 
-    metroGain.connect(audioCtx.destination);
-    playbackGain.connect(audioCtx.destination);
+metroGain.connect(audioCtx.destination);
+playbackGain.connect(audioCtx.destination);
 
-    metroGain.connect(recordDest);
-    playbackGain.connect(recordDest);
+// ✅ drums go to recording at LOWER level (prevents breakup)
+drumRecGain = audioCtx.createGain();
+drumRecGain.gain.value = 0.25; // try 0.15–0.40
+metroGain.connect(drumRecGain);
+drumRecGain.connect(recordDest);
+
+// playback still records normally (if you want)
+playbackGain.connect(recordDest);
   }
 }
 
