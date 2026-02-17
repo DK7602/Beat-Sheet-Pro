@@ -785,7 +785,10 @@ function renderProjectPicker(){
 let audioCtx = null;
 let metroGain = null;
 let playbackGain = null;
+
 let recordDest = null;
+let recordMix = null;      // ✅ sums mic + drums + playback for recording
+let recordLimiter = null;  // ✅ prevents recording breakup
 
 let metroTimer = null;
 let metroBeat16 = 0;
