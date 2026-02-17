@@ -183,6 +183,8 @@ els.autoScrollBtn?.addEventListener("click", ()=> setAutoScroll(!autoScrollOn));
 ***********************/
 const AUDIO_DB_NAME = `${KEY_PREFIX}audio_db_v1`;
 const AUDIO_STORE = "audio";
+// ✅ cache for decoded audio buffers (prevents re-decode lag)
+const decodedCache = new Map();
 
 function openAudioDB(){
   return new Promise((resolve, reject)=>{
@@ -1686,7 +1688,8 @@ async function handleUploadFile(file){
   const mime = file.type || "audio/*";
 
   await idbPutAudio({ id, blob: file, name, mime, createdAt: nowISO() });
-  decodedCache.delete(id);
+  if(id) decodedCache.delete(id);
+
 
   const rec = { id, blobId: id, name, createdAt: nowISO(), mime, kind: "track" };
   p.recordings.unshift(rec);
@@ -2366,7 +2369,7 @@ function renderRecordings(){
         const id = rec.blobId || rec.id;
         if(id) await idbDeleteAudio(id);
 
-        decodedCache.delete(id);
+        if(id) decodedCache.delete(id);
 
         p.recordings = p.recordings.filter(r=>r.id !== rec.id);
         touchProject(p);
@@ -2536,7 +2539,8 @@ els.deleteProjectBtn?.addEventListener("click", async ()=>{
     for(const rec of (active.recordings || [])){
       const id = rec.blobId || rec.id;
       if(id) await idbDeleteAudio(id);
-      decodedCache.delete(id);
+      if(id) decodedCache.delete(id);
+
     }
   }catch{}
 
