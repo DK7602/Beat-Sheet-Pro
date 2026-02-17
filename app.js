@@ -1464,7 +1464,7 @@ async function ensureMic(){
   micSource.connect(hp);
   hp.connect(comp);
   comp.connect(micGain);
-  micGain.connect(recordDest);
+  micGain.connect(recordMix); // ✅ goes through limiter now
 }
 
 function pickBestMime(){
