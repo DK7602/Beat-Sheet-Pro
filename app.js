@@ -1273,6 +1273,75 @@ async function decodeBlobToBuffer(blob){
     audioCtx.decodeAudioData(ab, resolve, reject);
   });
 }
+/***********************
+✅ MP3 ENCODE (Auto convert WebM take -> MP3 right after recording)
+Requires: lame.min.js loaded before app.js (window.lamejs)
+***********************/
+async function webmBlobToAudioBuffer(blob){
+  ensureAudio();
+  const ab = await blob.arrayBuffer();
+  return await new Promise((resolve, reject)=>{
+    audioCtx.decodeAudioData(ab, resolve, reject);
+  });
+}
+
+function mixToMono(audioBuffer){
+  const len = audioBuffer.length;
+  if(audioBuffer.numberOfChannels === 1){
+    return audioBuffer.getChannelData(0).slice(0);
+  }
+  const ch0 = audioBuffer.getChannelData(0);
+  const ch1 = audioBuffer.getChannelData(1);
+  const out = new Float32Array(len);
+  for(let i=0;i<len;i++) out[i] = (ch0[i] + ch1[i]) * 0.5;
+  return out;
+}
+
+function floatTo16BitPCM(float32){
+  const out = new Int16Array(float32.length);
+  for(let i=0;i<float32.length;i++){
+    let s = float32[i];
+    if(s > 1) s = 1;
+    else if(s < -1) s = -1;
+    out[i] = s < 0 ? (s * 0x8000) : (s * 0x7fff);
+  }
+  return out;
+}
+
+async function encodeMp3FromFloat32Mono(samples, sampleRate){
+  if(!window.lamejs || !window.lamejs.Mp3Encoder){
+    throw new Error("lamejs_missing");
+  }
+
+  // 128kbps is a good balance for voice + quick files
+  const mp3enc = new window.lamejs.Mp3Encoder(1, sampleRate, 128);
+
+  const blockSize = 1152;
+  const mp3Chunks = [];
+
+  for(let i=0;i<samples.length;i+=blockSize){
+    const chunk = samples.subarray(i, i + blockSize);
+    const int16 = floatTo16BitPCM(chunk);
+    const buf = mp3enc.encodeBuffer(int16);
+    if(buf && buf.length) mp3Chunks.push(new Uint8Array(buf));
+
+    // yield sometimes so UI doesn’t freeze on longer takes
+    if(i && (i % (blockSize * 60) === 0)){
+      await new Promise(r=>setTimeout(r, 0));
+    }
+  }
+
+  const end = mp3enc.flush();
+  if(end && end.length) mp3Chunks.push(new Uint8Array(end));
+
+  return new Blob(mp3Chunks, { type:"audio/mpeg" });
+}
+
+async function convertWebmBlobToMp3(webmBlob){
+  const audioBuffer = await webmBlobToAudioBuffer(webmBlob);
+  const mono = mixToMono(audioBuffer);
+  return await encodeMp3FromFloat32Mono(mono, audioBuffer.sampleRate);
+}
 
 const playback = {
   isPlaying: false,
@@ -1515,28 +1584,55 @@ async function startRecording(){
     if(metroOn) stopMetronome();
     if(!(metroOn || playback.isPlaying)) stopEyePulse();
 
-    const blob = new Blob(recChunks, { type: recorder.mimeType || mimeType || "audio/webm" });
-    const p = getActiveProject();
+  const webmBlob = new Blob(recChunks, { type: recorder.mimeType || mimeType || "audio/webm" });
 
-    const typed = takeNameFromInput();
-    const name = typed || `Take ${new Date().toLocaleString()}`;
+const p = getActiveProject();
+const typed = takeNameFromInput();
+const name = typed || `Take ${new Date().toLocaleString()}`;
 
-    const id = uid();
-    try{
-      await idbPutAudio({ id, blob, name, mime: blob.type, createdAt: nowISO() });
-    }catch(e){
-      console.error(e);
-      showToast("Audio save failed");
-      return;
-    }
+let mp3Blob;
 
-    const rec = { id, blobId: id, name, createdAt: nowISO(), mime: blob.type || "audio/webm", kind:"take" };
-    p.recordings.unshift(rec);
+try{
+  showToast("Converting to MP3...");
+  mp3Blob = await convertBlobToMp3(webmBlob);
+}catch(e){
+  console.error(e);
+  showToast("MP3 conversion failed");
+  return;
+}
 
-    clearTakeNameInput();
-    touchProject(p);
-    renderRecordings();
-    showToast("Saved take");
+const id = uid();
+
+try{
+  await idbPutAudio({
+    id,
+    blob: mp3Blob,
+    name,
+    mime: "audio/mpeg",
+    createdAt: nowISO()
+  });
+}catch(e){
+  console.error(e);
+  showToast("Audio save failed");
+  return;
+}
+
+const rec = {
+  id,
+  blobId: id,
+  name,
+  createdAt: nowISO(),
+  mime: "audio/mpeg",
+  kind: "take"
+};
+
+p.recordings.unshift(rec);
+
+clearTakeNameInput();
+touchProject(p);
+renderRecordings();
+showToast("Saved as MP3");
+ 
   };
 
   recorder.start(1000);
