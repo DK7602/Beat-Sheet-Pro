@@ -1430,7 +1430,7 @@ async function ensureMic(){
   comp.release.value = 0.18;
 
   micGain = audioCtx.createGain();
-  micGain.gain.value = 0.7;
+  micGain.gain.value = 0.55;
 
   micSource.connect(hp);
   hp.connect(comp);
