@@ -1262,17 +1262,145 @@ function handleDrumPress(which){
 }
 
 /***********************
-✅ PLAYBACK
+✅ PLAYBACK (crackle-free)
+Use native <audio> element for playback (stable on Android/Chrome),
+but route it through AudioContext for volume + recording mix.
 ***********************/
-const decodedCache = new Map();
-async function blobToArrayBuffer(blob){ return await blob.arrayBuffer(); }
-async function decodeBlobToBuffer(blob){
+let playerEl = null;
+let playerNode = null;
+let playerUrl = null;
+
+function ensurePlayerNode(){
   ensureAudio();
-  const ab = await blobToArrayBuffer(blob);
-  return await new Promise((resolve, reject)=>{
-    audioCtx.decodeAudioData(ab, resolve, reject);
-  });
+  if(!playerEl){
+    playerEl = document.createElement("audio");
+    playerEl.preload = "auto";
+    playerEl.playsInline = true;
+    playerEl.crossOrigin = "anonymous"; // safe even for blob URLs
+  }
+  if(!playerNode){
+    // IMPORTANT: only ONE MediaElementSource per element
+    playerNode = audioCtx.createMediaElementSource(playerEl);
+    playerNode.connect(playbackGain);
+  }
 }
+
+const playback = {
+  isPlaying: false,
+  recId: null,
+
+  raf: null,
+
+  stop(fromEnded){
+    if(this.raf) cancelAnimationFrame(this.raf);
+    this.raf = null;
+
+    this.isPlaying = false;
+
+    // stop audio element cleanly
+    try{
+      if(playerEl){
+        playerEl.onended = null;
+        playerEl.pause();
+        playerEl.currentTime = 0;
+      }
+    }catch{}
+
+    // release object URL (prevents memory + glitch buildup)
+    try{
+      if(playerUrl){
+        URL.revokeObjectURL(playerUrl);
+        playerUrl = null;
+      }
+    }catch{}
+
+    // clear src to fully stop streaming/decoding
+    try{
+      if(playerEl){
+        playerEl.removeAttribute("src");
+        playerEl.load();
+      }
+    }catch{}
+
+    this.recId = null;
+
+    renderRecordings();
+    if(!(metroOn || recording)) stopEyePulse();
+    if(fromEnded) showToast("Done");
+
+    if(!metroOn && !recording) clearAllPracticeAndActive();
+  },
+
+  _startSyncLoop(){
+    const loop = () => {
+      if(!this.isPlaying || !playerEl) return;
+
+      // Use native playback time (stable)
+      const t = Math.max(0, playerEl.currentTime || 0);
+
+      const bpm = getProjectBpm();
+      const beatPos = (t * bpm) / 60;
+      const beatInBar = Math.floor(beatPos) % 4;
+      const barIdx = Math.floor(beatPos / 4);
+
+      const p = getActiveProject();
+      const pageKey = p?.activeSection || "full";
+      syncHighlightAndScroll(pageKey, barIdx, beatInBar);
+
+      this.raf = requestAnimationFrame(loop);
+    };
+    this.raf = requestAnimationFrame(loop);
+  },
+
+  async playRec(rec){
+    ensureAudio();
+    ensurePlayerNode();
+
+    if(audioCtx.state === "suspended") await audioCtx.resume();
+
+    this.stop(false);
+    this.recId = rec.id;
+
+    const blob = await getRecBlob(rec);
+    if(!blob){
+      showToast("Missing audio");
+      this.recId = null;
+      return;
+    }
+
+    // build fresh URL every time
+    try{
+      if(playerUrl) URL.revokeObjectURL(playerUrl);
+    }catch{}
+    playerUrl = URL.createObjectURL(blob);
+
+    // wire up ended
+    playerEl.onended = () => {
+      // ended fires reliably even if tab is backgrounded
+      if(this.isPlaying) this.stop(true);
+    };
+
+    // set src + play
+    try{
+      playerEl.src = playerUrl;
+      playerEl.currentTime = 0;
+
+      // IMPORTANT: call play() from a user gesture (your click handler does)
+      await playerEl.play();
+    }catch(e){
+      console.error(e);
+      this.stop(false);
+      showToast("Play failed");
+      return;
+    }
+
+    this.isPlaying = true;
+    startEyePulseFromBpm();
+    this._startSyncLoop();
+    renderRecordings();
+  }
+};
+
 /***********************
 ✅ MP3 ENCODE (Auto convert WebM take -> MP3 right after recording)
 Requires: lame.min.js loaded before app.js (window.lamejs)
