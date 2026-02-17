@@ -799,25 +799,44 @@ function ensureAudio(){
   if(!audioCtx){
     audioCtx = new (window.AudioContext || window.webkitAudioContext)();
 
+    // speakers
     metroGain = audioCtx.createGain();
     metroGain.gain.value = 1.8;
 
     playbackGain = audioCtx.createGain();
     playbackGain.gain.value = 1.0;
 
+    // recording destination
     recordDest = audioCtx.createMediaStreamDestination();
 
-metroGain.connect(audioCtx.destination);
-playbackGain.connect(audioCtx.destination);
+    // ✅ RECORD MIX BUS (record-only)
+    recordMix = audioCtx.createGain();
+    recordMix.gain.value = 0.95; // small headroom before limiter
 
-// ✅ drums go to recording at LOWER level (prevents breakup)
-drumRecGain = audioCtx.createGain();
-drumRecGain.gain.value = 0.50; // try 0.15–0.40
-metroGain.connect(drumRecGain);
-drumRecGain.connect(recordDest);
+    // ✅ LIMITER (record-only) to stop breakup
+    recordLimiter = audioCtx.createDynamicsCompressor();
+    recordLimiter.threshold.value = -10; // start limiting near peaks
+    recordLimiter.knee.value = 0;        // hard knee = limiter feel
+    recordLimiter.ratio.value = 20;      // high ratio = limiting
+    recordLimiter.attack.value = 0.003;  // fast catch
+    recordLimiter.release.value = 0.12;  // smooth recovery
 
-// playback still records normally (if you want)
-playbackGain.connect(recordDest);
+    // connect record chain
+    recordMix.connect(recordLimiter);
+    recordLimiter.connect(recordDest);
+
+    // speakers output (unchanged)
+    metroGain.connect(audioCtx.destination);
+    playbackGain.connect(audioCtx.destination);
+
+    // ✅ drums go to recording mix (not straight to recordDest)
+    drumRecGain = audioCtx.createGain();
+    drumRecGain.gain.value = 0.50;   // keep your loudness target
+    metroGain.connect(drumRecGain);
+    drumRecGain.connect(recordMix);
+
+    // ✅ playback can be included in recordings if you want
+    playbackGain.connect(recordMix);
   }
 }
 
