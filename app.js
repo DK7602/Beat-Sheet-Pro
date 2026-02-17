@@ -786,6 +786,9 @@ let audioCtx = null;
 let metroGain = null;
 let playbackGain = null;
 
+let masterMix = null;
+let masterLimiter = null;
+
 let recordDest = null;
 let recordMix = null;      // ✅ sums mic + drums + playback for recording
 let recordLimiter = null;  // ✅ prevents recording breakup
@@ -801,10 +804,10 @@ function ensureAudio(){
 
     // speakers
     metroGain = audioCtx.createGain();
-    metroGain.gain.value = 1.8;
+    metroGain.gain.value = 1.4;
 
     playbackGain = audioCtx.createGain();
-    playbackGain.gain.value = 1.0;
+    playbackGain.gain.value = 0.9;
 
     // recording destination
     recordDest = audioCtx.createMediaStreamDestination();
@@ -825,9 +828,25 @@ function ensureAudio(){
     recordMix.connect(recordLimiter);
     recordLimiter.connect(recordDest);
 
-    // speakers output (unchanged)
-    metroGain.connect(audioCtx.destination);
-    playbackGain.connect(audioCtx.destination);
+    // ✅ MASTER SPEAKER BUS (prevents playback breakup/clipping)
+masterMix = audioCtx.createGain();
+masterMix.gain.value = 0.95; // tiny headroom
+
+masterLimiter = audioCtx.createDynamicsCompressor();
+masterLimiter.threshold.value = -10;
+masterLimiter.knee.value = 0;
+masterLimiter.ratio.value = 20;
+masterLimiter.attack.value = 0.003;
+masterLimiter.release.value = 0.12;
+
+// route speakers through limiter
+masterMix.connect(masterLimiter);
+masterLimiter.connect(audioCtx.destination);
+
+// send metro + playback into master speaker bus
+metroGain.connect(masterMix);
+playbackGain.connect(masterMix);
+
 
     // ✅ drums go to recording mix (not straight to recordDest)
     drumRecGain = audioCtx.createGain();
@@ -2282,7 +2301,9 @@ function renderRecordings(){
     editBtn.className = "iconBtn";
     editBtn.title = "Edit name";
     editBtn.textContent = "i";
-    editBtn.addEventListener("click", ()=>{
+  editBtn.addEventListener("click", (ev)=>{
+  ev.preventDefault();
+  ev.stopPropagation();
       editingRecId = rec.id;
       renderRecordings();
       requestAnimationFrame(()=>{
@@ -2297,7 +2318,9 @@ function renderRecordings(){
     playBtn.title = "Play";
     const isThisPlaying = playback.isPlaying && playback.recId === rec.id;
     playBtn.textContent = isThisPlaying ? "…" : "▶";
-    playBtn.addEventListener("click", async ()=>{
+ playBtn.addEventListener("click", async (ev)=>{
+  ev.preventDefault();
+  ev.stopPropagation();
       try{
         await playback.playRec(rec);
         showToast("Play");
@@ -2311,7 +2334,9 @@ function renderRecordings(){
     stopBtn.className = "iconBtn stop";
     stopBtn.title = "Stop";
     stopBtn.textContent = "■";
-    stopBtn.addEventListener("click", ()=>{
+  stopBtn.addEventListener("click", (ev)=>{
+  ev.preventDefault();
+  ev.stopPropagation();
       playback.stop(false);
       showToast("Stop");
     });
@@ -2320,13 +2345,20 @@ function renderRecordings(){
     dlBtn.className = "iconBtn";
     dlBtn.title = "Download";
     dlBtn.textContent = "⬇";
-    dlBtn.addEventListener("click", ()=>downloadRec(rec));
+   dlBtn.addEventListener("click", (ev)=>{
+  ev.preventDefault();
+  ev.stopPropagation();
+  downloadRec(rec);
+});
+
 
     const delBtn = document.createElement("button");
     delBtn.className = "iconBtn delete";
     delBtn.title = "Delete";
     delBtn.textContent = "×";
-    delBtn.addEventListener("click", async ()=>{
+   delBtn.addEventListener("click", async (ev)=>{
+  ev.preventDefault();
+  ev.stopPropagation();
       try{
         if(playback.recId === rec.id) playback.stop(false);
         if(editingRecId === rec.id) editingRecId = null;
