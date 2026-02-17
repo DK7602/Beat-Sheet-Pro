@@ -1405,19 +1405,36 @@ let micGain = null;
 
 async function ensureMic(){
   if(micStream) return;
-  micStream = await navigator.mediaDevices.getUserMedia({
-  audio: {
-    echoCancellation: false,
-    noiseSuppression: false,
-    autoGainControl: false
-  }
-});
-  ensureAudio();
-  micSource = audioCtx.createMediaStreamSource(micStream);
-  micGain = audioCtx.createGain();
-  micGain.gain.value = 0.7;
 
-  micSource.connect(micGain);
+  micStream = await navigator.mediaDevices.getUserMedia({
+    audio: {
+      echoCancellation: true,
+      noiseSuppression: false,
+      autoGainControl: false
+    }
+  });
+
+  ensureAudio();
+
+  micSource = audioCtx.createMediaStreamSource(micStream);
+
+  const hp = audioCtx.createBiquadFilter();
+  hp.type = "highpass";
+  hp.frequency.value = 110;
+
+  const comp = audioCtx.createDynamicsCompressor();
+  comp.threshold.value = -28;
+  comp.knee.value = 18;
+  comp.ratio.value = 4;
+  comp.attack.value = 0.01;
+  comp.release.value = 0.18;
+
+  micGain = audioCtx.createGain();
+  micGain.gain.value = 1.6;
+
+  micSource.connect(hp);
+  hp.connect(comp);
+  comp.connect(micGain);
   micGain.connect(recordDest);
 }
 
