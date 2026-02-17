@@ -1452,9 +1452,9 @@ async function ensureMic(){
   hp.frequency.value = 110;
 
   const comp = audioCtx.createDynamicsCompressor();
-  comp.threshold.value = -28;
-  comp.knee.value = 18;
-  comp.ratio.value = 4;
+  comp.threshold.value = -12;
+  comp.knee.value = 12;
+  comp.ratio.value = 2.5;
   comp.attack.value = 0.01;
   comp.release.value = 0.18;
 
