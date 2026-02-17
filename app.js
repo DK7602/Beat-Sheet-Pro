@@ -809,7 +809,7 @@ playbackGain.connect(audioCtx.destination);
 
 // ✅ drums go to recording at LOWER level (prevents breakup)
 drumRecGain = audioCtx.createGain();
-drumRecGain.gain.value = 0.40; // try 0.15–0.40
+drumRecGain.gain.value = 0.50; // try 0.15–0.40
 metroGain.connect(drumRecGain);
 drumRecGain.connect(recordDest);
 
