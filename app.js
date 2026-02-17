@@ -1402,6 +1402,7 @@ let recChunks = [];
 let micStream = null;
 let micSource = null;
 let micGain = null;
+  let drumRecGain = null;
 
 async function ensureMic(){
   if(micStream) return;
