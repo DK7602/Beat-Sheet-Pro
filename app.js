@@ -1594,7 +1594,8 @@ let mp3Blob;
 
 try{
   showToast("Converting to MP3...");
-  mp3Blob = await convertBlobToMp3(webmBlob);
+ mp3Blob = await convertWebmBlobToMp3(webmBlob);
+
 }catch(e){
   console.error(e);
   showToast("MP3 conversion failed");
