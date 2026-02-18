@@ -1538,13 +1538,51 @@ let micGain = null;
 async function ensureMic(){
   if(micStream) return;
 
+ // ✅ Ask for a "music-like" mic path (turn OFF call-processing)
+try{
   micStream = await navigator.mediaDevices.getUserMedia({
     audio: {
-      echoCancellation: true,
+      echoCancellation: false,
+      noiseSuppression: false,
+      autoGainControl: false,
+
+      // Helpful on some devices/browsers (ignored if unsupported)
+      channelCount: 1,
+      sampleRate: 48000,
+      sampleSize: 16,
+      latency: 0.02,
+
+      // Legacy Chrome flags (safe; ignored if unsupported)
+      googEchoCancellation: false,
+      googAutoGainControl: false,
+      googNoiseSuppression: false,
+      googHighpassFilter: false,
+      googTypingNoiseDetection: false
+    }
+  });
+  // ✅ after getUserMedia (after try/catch), force-disable call-processing if supported
+try{
+  const track = micStream?.getAudioTracks?.()[0];
+  if(track?.applyConstraints){
+    await track.applyConstraints({
+      echoCancellation: false,
+      noiseSuppression: false,
+      autoGainControl: false
+    });
+  }
+}catch{}
+
+}catch(err){
+  // Fallback: still try to kill processing if possible
+  micStream = await navigator.mediaDevices.getUserMedia({
+    audio: {
+      echoCancellation: false,
       noiseSuppression: false,
       autoGainControl: false
     }
   });
+}
+
 
   ensureAudio();
 
