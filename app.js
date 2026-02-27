@@ -105,9 +105,10 @@ const OLD_HEADER_COLLAPSED_KEY = "beatsheetpro_header_collapsed_v1";
 })();
 
 /***********************
-✅ SECTIONS
+✅ SECTIONS (dynamic pages)
 ***********************/
-const SECTION_DEFS = [
+const BASE_SECTION_DEFS = [
+  { key:"intro",   title:"Intro"    },
   { key:"verse1",  title:"Verse 1"  },
   { key:"chorus1", title:"Chorus 1" },
   { key:"verse2",  title:"Verse 2"  },
@@ -117,11 +118,44 @@ const SECTION_DEFS = [
   { key:"chorus3", title:"Chorus 3" },
 ];
 
-const FULL_ORDER = ["verse1","chorus1","verse2","chorus2","verse3","bridge","chorus3"];
-const PAGE_ORDER = ["full", ...FULL_ORDER];
+// base order never changes
+const BASE_ORDER = BASE_SECTION_DEFS.map(s=>s.key);
 
-const FULL_HEADINGS = FULL_ORDER.map(k => (SECTION_DEFS.find(s=>s.key===k)?.title || k).toUpperCase());
-const headingSet = new Set(FULL_HEADINGS);
+// helpers
+function isExtraKey(k){ return /^extra\d+$/.test(String(k||"")); }
+function extraIndex(k){
+  const m = String(k||"").match(/^extra(\d+)$/);
+  return m ? parseInt(m[1],10) : 0;
+}
+function makeExtraKey(n){ return `extra${n}`; }
+
+// FULL headings set (used by rhyme logic to skip headings)
+function getHeadingTextForKey(p, key){
+  if(key === "full") return "FULL";
+  const base = BASE_SECTION_DEFS.find(s=>s.key===key);
+  if(base) return base.title.toUpperCase();
+
+  // extras
+  const sec = p?.sections?.[key];
+  const t = (sec?.title || "").trim();
+  if(t) return t.toUpperCase();
+  const n = extraIndex(key) || 1;
+  return `EXTRA ${n}`;
+}
+
+function getFullOrder(p){
+  // FULL always shows base headings + any extras that have been created/known
+  const extras = (p?.extraKeys || []).filter(isExtraKey);
+  return [...BASE_ORDER, ...extras];
+}
+
+function buildHeadingSet(p){
+  const set = new Set();
+  for(const k of getFullOrder(p)){
+    set.add(getHeadingTextForKey(p, k));
+  }
+  return set;
+}
 
 // ---------- utils ----------
 const nowISO = () => new Date().toISOString();
@@ -672,13 +706,18 @@ document.addEventListener("click", (e)=>{
 ***********************/
 function blankSections(){
   const sections = {};
-  for(const s of SECTION_DEFS){
+
+  // base sections always exist in data
+  for(const s of BASE_SECTION_DEFS){
     sections[s.key] = {
       key: s.key,
-      title: s.title,
+      title: s.title,       // fixed title for base
       bars: [{ text:"" }],
+      titleEditable: false
     };
   }
+
+  // extras are created later
   return sections;
 }
 function newProject(name=""){
@@ -692,6 +731,10 @@ function newProject(name=""){
     highlightMode: "all",
     recordings: [],
     sections: blankSections(),
+
+        pageKeysActive: [],      // only FULL exists initially
+    pageDeleted: {},         // keys explicitly deleted (skip on +)
+    extraKeys: [],           // ordered list of extras created
   };
 }
 function loadStore(){
@@ -713,17 +756,34 @@ let store = loadStore();
 function repairProject(p){
   if(!p.sections || typeof p.sections !== "object") p.sections = blankSections();
 
-  for(const def of SECTION_DEFS){
+  // ✅ ensure page state
+  if(!Array.isArray(p.pageKeysActive)) p.pageKeysActive = [];
+  if(!p.pageDeleted || typeof p.pageDeleted !== "object") p.pageDeleted = {};
+  if(!Array.isArray(p.extraKeys)) p.extraKeys = [];
+
+  // ✅ ensure base sections exist
+  for(const def of BASE_SECTION_DEFS){
     if(!p.sections[def.key] || typeof p.sections[def.key] !== "object"){
-      p.sections[def.key] = { key:def.key, title:def.title, bars:[{text:""}] };
+      p.sections[def.key] = { key:def.key, title:def.title, bars:[{text:""}], titleEditable:false };
     }
-    if(!Array.isArray(p.sections[def.key].bars)){
-      p.sections[def.key].bars = [{ text:"" }];
-    }
-    if(p.sections[def.key].bars.length === 0){
-      p.sections[def.key].bars = [{ text:"" }];
-    }
+    if(!Array.isArray(p.sections[def.key].bars)) p.sections[def.key].bars = [{ text:"" }];
+    if(p.sections[def.key].bars.length === 0) p.sections[def.key].bars = [{ text:"" }];
     p.sections[def.key].bars = p.sections[def.key].bars.map(b => ({ text: (b?.text ?? "") }));
+    p.sections[def.key].title = def.title;
+    p.sections[def.key].titleEditable = false;
+  }
+
+  // ✅ ensure extras listed exist as sections
+  p.extraKeys = p.extraKeys.filter(isExtraKey);
+  for(const k of p.extraKeys){
+    if(!p.sections[k] || typeof p.sections[k] !== "object"){
+      const n = extraIndex(k) || (p.extraKeys.indexOf(k)+1);
+      p.sections[k] = { key:k, title:"", bars:[{text:""}], titleEditable:true, extraNum:n };
+    }
+    if(!Array.isArray(p.sections[k].bars)) p.sections[k].bars = [{ text:"" }];
+    if(p.sections[k].bars.length === 0) p.sections[k].bars = [{ text:"" }];
+    p.sections[k].bars = p.sections[k].bars.map(b => ({ text: (b?.text ?? "") }));
+    p.sections[k].titleEditable = true;
   }
 
   if(!p.activeSection) p.activeSection = "full";
@@ -737,7 +797,10 @@ function repairProject(p){
     if(!r.blobId && r.id) r.blobId = r.blobId || r.id;
   });
 
-  if(!PAGE_ORDER.includes(p.activeSection)) p.activeSection = "full";
+  // ✅ if active section no longer exists as a page, snap to FULL
+  const activePages = new Set(["full", ...(p.pageKeysActive||[])]);
+  if(!activePages.has(p.activeSection)) p.activeSection = "full";
+
   return p;
 }
 
@@ -1750,9 +1813,10 @@ async function handleUploadFile(file){
 ***********************/
 function buildFullTextFromProject(p){
   const out = [];
-  for(const key of FULL_ORDER){
-    const heading = (SECTION_DEFS.find(s=>s.key===key)?.title || key).toUpperCase();
-    out.push(heading);
+  const order = getFullOrder(p);
+
+  for(const key of order){
+    out.push(getHeadingTextForKey(p, key));
 
     const sec = p.sections[key];
     if(sec?.bars){
@@ -1778,10 +1842,25 @@ function applyFullTextToProject(p, fullText){
 
   function headingToKey(line){
     const up = String(line||"").trim().toUpperCase();
-    const def = SECTION_DEFS.find(s => s.title.toUpperCase() === up);
-    return def ? def.key : null;
-  }
+    if(!up) return null;
 
+    // base headings
+    for(const def of BASE_SECTION_DEFS){
+      if(def.title.toUpperCase() === up) return def.key;
+    }
+
+    // extras headings: match current titles OR "EXTRA n"
+    for(const k of (p.extraKeys || [])){
+      const sec = p.sections?.[k];
+      const t = (sec?.title || "").trim().toUpperCase();
+      if(t && t === up) return k;
+
+      const n = extraIndex(k) || 1;
+      if(`EXTRA ${n}` === up) return k;
+    }
+
+    return null;
+  }
   const writeIndex = {};
   for(const k of FULL_ORDER) writeIndex[k] = 0;
 
@@ -1810,7 +1889,8 @@ function applyFullTextToProject(p, fullText){
       sec.bars = [{ text:"" }];
     }
   }
-
+  // ✅ if user typed under a deleted heading, re-enable that page
+  ensurePagesForText(p);
   touchProject(p);
 }
 function syncSectionCardsFromProject(p){
@@ -1858,7 +1938,8 @@ function updateRhymesFromFullCaret(fullTa){
     const trimmed = line.trim();
     if(!trimmed){ j--; continue; }
     const up = trimmed.toUpperCase();
-    if(headingSet.has(up)){ j--; continue; }
+  const hs = buildHeadingSet(getActiveProject());
+if(hs.has(up)){ j--; continue; }
     updateRhymes(lastWord(trimmed));
     return;
   }
@@ -1866,14 +1947,260 @@ function updateRhymesFromFullCaret(fullTa){
 }
 
 /***********************
-✅ CAROUSEL PAGER (wrap)
+✅ CAROUSEL PAGER (wrap) — dynamic pages
 ***********************/
-const CAROUSEL_ORDER = [
-  PAGE_ORDER[PAGE_ORDER.length - 1],
-  ...PAGE_ORDER,
-  PAGE_ORDER[0]
-];
+function getCarouselOrder(p){
+  const order = getActivePageOrder(p);
+  return [order[order.length - 1], ...order, order[0]];
+}
 
+function buildPager(p){
+  const pager = document.createElement("div");
+  pager.className = "pager";
+  pager.id = "pagesPager";
+
+  const CAROUSEL_ORDER = getCarouselOrder(p);
+
+  CAROUSEL_ORDER.forEach((key, i)=>{
+    const page = document.createElement("div");
+    page.className = "page";
+    page.dataset.pageKey = key;
+
+    if(i === 0 || i === CAROUSEL_ORDER.length - 1){
+      page.dataset.clone = "1";
+    }
+
+    // title row (FULL + / ×, all pages + / ×)
+    const titleRow = document.createElement("div");
+    titleRow.className = "pageTitleRow";
+
+    const titleTxt = document.createElement("div");
+    titleTxt.className = "pageTitle";
+    titleTxt.textContent = getHeadingTextForKey(p, key);
+
+    const btns = document.createElement("div");
+    btns.className = "pageTitleBtns";
+
+    const addBtn = document.createElement("button");
+    addBtn.type = "button";
+    addBtn.className = "pageTitleBtn";
+    addBtn.textContent = "+";
+    addBtn.title = "Add next page";
+    addBtn.setAttribute("data-action","addPage");
+    addBtn.setAttribute("data-page", key);
+
+    const delBtn = document.createElement("button");
+    delBtn.type = "button";
+    delBtn.className = "pageTitleBtn del";
+    delBtn.textContent = "×";
+    delBtn.title = (key === "full") ? "Clear pages (FULL stays)" : "Delete page";
+    delBtn.setAttribute("data-action","delPage");
+    delBtn.setAttribute("data-page", key);
+
+    btns.appendChild(addBtn);
+    btns.appendChild(delBtn);
+
+    titleRow.appendChild(titleTxt);
+    titleRow.appendChild(btns);
+    page.appendChild(titleRow);
+
+    if(key === "full"){
+      const box = document.createElement("div");
+      box.className = "fullBox";
+      box.innerHTML = `
+        <div class="fullSub">
+          Paste + edit. Rhymes follow the last word on the line above your cursor. Use "/" for manual beat breaks.
+        </div>
+        <textarea class="fullEditor" spellcheck="false"></textarea>
+      `;
+      page.appendChild(box);
+      pager.appendChild(page);
+      return;
+    }
+
+    const mount = document.createElement("div");
+    mount.style.display = "flex";
+    mount.style.flexDirection = "column";
+    mount.style.gap = "10px";
+
+    // ✅ extra title editor (blank editable title)
+    if(isExtraKey(key)){
+      const sec = p.sections[key] || (p.sections[key] = { key, title:"", bars:[{text:""}], titleEditable:true });
+      const titleInput = document.createElement("input");
+      titleInput.type = "text";
+      titleInput.placeholder = "Title…";
+      titleInput.value = (sec.title || "");
+      titleInput.className = "wideInput";
+      titleInput.addEventListener("input", ()=>{
+        sec.title = String(titleInput.value || "");
+        touchProject(p);
+
+        // rebuild FULL text headings + pager title
+        renderBars();
+      });
+      mount.appendChild(titleInput);
+    }
+
+    renderSectionBarsInto(p, key, mount);
+    page.appendChild(mount);
+    pager.appendChild(page);
+  });
+
+  return pager;
+}
+
+function measurePager(pagerEl){
+  const w = Math.round(pagerEl.clientWidth || pagerEl.getBoundingClientRect().width || window.innerWidth);
+  return Math.max(1, w);
+}
+function getCurrentIdx(pagerEl){
+  const w = measurePager(pagerEl);
+  const idx = Math.round(pagerEl.scrollLeft / w);
+  return Math.max(0, Math.min((pagerEl.children.length - 1), idx));
+}
+function snapToIdx(pagerEl, idx, behavior="auto"){
+  const w = measurePager(pagerEl);
+  idx = Math.max(0, Math.min((pagerEl.children.length - 1), idx));
+  pagerEl.scrollTo({ left: idx * w, behavior });
+}
+
+function setActiveSectionFromIdx(p, idx){
+  const order = getActivePageOrder(p);
+  const CAROUSEL_ORDER = [order[order.length - 1], ...order, order[0]];
+
+  let key = CAROUSEL_ORDER[idx] || "full";
+  if(idx === 0) key = order[order.length - 1];
+  if(idx === CAROUSEL_ORDER.length - 1) key = order[0];
+
+  if(p.activeSection !== key){
+    p.activeSection = key;
+    touchProject(p);
+
+    lastAutoScrollToken = null;
+    clearAllPracticeAndActive();
+  }
+}
+/***********************
+✅ page sequencing / add-delete
+***********************/
+function getActivePageOrder(p){
+  // swipe order: FULL + active pages (in base sequence, then extras)
+  const active = new Set(p.pageKeysActive || []);
+  const base = BASE_ORDER.filter(k => active.has(k));
+  const extras = (p.extraKeys || []).filter(k => active.has(k));
+  return ["full", ...base, ...extras];
+}
+
+function isDeleted(p, key){
+  return !!(p.pageDeleted && p.pageDeleted[key]);
+}
+function markDeleted(p, key, v){
+  if(!p.pageDeleted || typeof p.pageDeleted !== "object") p.pageDeleted = {};
+  if(v) p.pageDeleted[key] = 1;
+  else delete p.pageDeleted[key];
+}
+
+function sectionHasAnyText(p, key){
+  const bars = p?.sections?.[key]?.bars || [];
+  return bars.some(b => String(b?.text||"").trim().length > 0);
+}
+
+function ensurePagesForText(p){
+  // if user typed text under a deleted heading in FULL, bring it back + un-delete
+  for(const k of getFullOrder(p)){
+    if(sectionHasAnyText(p, k)){
+      markDeleted(p, k, false);
+      if(!p.pageKeysActive.includes(k)) p.pageKeysActive.push(k);
+    }
+  }
+}
+
+function nextAddKeyFrom(p, fromKey){
+  // From FULL: first non-active, non-deleted base section; then extras
+  const active = new Set(p.pageKeysActive || []);
+
+  if(fromKey === "full"){
+    // base sequence first
+    for(const k of BASE_ORDER){
+      if(active.has(k)) continue;
+      if(isDeleted(p,k)) continue;         // ✅ skip deleted until text restores
+      return k;
+    }
+    // then extras: create new extra if needed
+    return "__NEW_EXTRA__";
+  }
+
+  // from a section page: go to next in base order if possible
+  const idx = BASE_ORDER.indexOf(fromKey);
+  if(idx >= 0){
+    for(let i=idx+1;i<BASE_ORDER.length;i++){
+      const k = BASE_ORDER[i];
+      if(active.has(k)) continue;
+      if(isDeleted(p,k)) continue;
+      return k;
+    }
+    return "__NEW_EXTRA__";
+  }
+
+  // from an extra: create the next extra
+  return "__NEW_EXTRA__";
+}
+
+function createNextExtra(p){
+  if(!Array.isArray(p.extraKeys)) p.extraKeys = [];
+  const existingNums = p.extraKeys.map(extraIndex).filter(n=>n>0);
+  const nextNum = existingNums.length ? (Math.max(...existingNums)+1) : 1;
+  const key = makeExtraKey(nextNum);
+
+  if(!p.sections[key]){
+    p.sections[key] = { key, title:"", bars:[{text:""}], titleEditable:true, extraNum: nextNum };
+  }
+  if(!p.extraKeys.includes(key)) p.extraKeys.push(key);
+  return key;
+}
+
+function addNextPage(p, fromKey){
+  const next = nextAddKeyFrom(p, fromKey);
+
+  let key = next;
+  if(next === "__NEW_EXTRA__"){
+    key = createNextExtra(p);
+  }
+
+  // add to active pages
+  if(!p.pageKeysActive.includes(key)) p.pageKeysActive.push(key);
+
+  // switch to it
+  p.activeSection = key;
+  touchProject(p);
+  renderBars();
+
+  // snap after render
+  requestAnimationFrame(()=>{
+    const pager = document.getElementById("pagesPager");
+    if(!pager) return;
+    const order = getActivePageOrder(p);
+    const idx = order.indexOf(key);
+    if(idx >= 0) snapToIdx(pager, idx + 1, "smooth"); // +1 because carousel clone
+  });
+
+  showToast("Added page");
+}
+
+function deletePageKey(p, key){
+  if(!key || key === "full") return;
+
+  // mark deleted + remove from active
+  markDeleted(p, key, true);
+  p.pageKeysActive = (p.pageKeysActive || []).filter(k => k !== key);
+
+  // if we were on that page, go back to FULL
+  if(p.activeSection === key) p.activeSection = "full";
+
+  touchProject(p);
+  renderBars();
+  showToast("Deleted page");
+}
 function buildPager(p){
   const pager = document.createElement("div");
   pager.className = "pager";
@@ -1966,20 +2293,24 @@ function setupCarouselPager(pagerEl, p){
   pagerEl.addEventListener("scroll", ()=>{
     if(tmr) clearTimeout(tmr);
     tmr = setTimeout(()=>{
-      const idx = getCurrentIdx(pagerEl);
+    const order = getActivePageOrder(p);
+const CAROUSEL_ORDER = [order[order.length - 1], ...order, order[0]];
+const idx = getCurrentIdx(pagerEl);
 
-      if(idx === 0){
-        const lastRealCarouselIdx = CAROUSEL_ORDER.length - 2;
-        snapToIdx(pagerEl, lastRealCarouselIdx, "auto");
-        setActiveSectionFromIdx(p, lastRealCarouselIdx);
-        return;
-      }
-      if(idx === CAROUSEL_ORDER.length - 1){
-        const firstRealCarouselIdx = 1;
-        snapToIdx(pagerEl, firstRealCarouselIdx, "auto");
-        setActiveSectionFromIdx(p, firstRealCarouselIdx);
-        return;
-      }
+if(idx === 0){
+  const lastRealCarouselIdx = CAROUSEL_ORDER.length - 2;
+  snapToIdx(pagerEl, lastRealCarouselIdx, "auto");
+  setActiveSectionFromIdx(p, lastRealCarouselIdx);
+  return;
+}
+if(idx === CAROUSEL_ORDER.length - 1){
+  const firstRealCarouselIdx = 1;
+  snapToIdx(pagerEl, firstRealCarouselIdx, "auto");
+  setActiveSectionFromIdx(p, firstRealCarouselIdx);
+  return;
+}
+
+setActiveSectionFromIdx(p, idx); 
 
       setActiveSectionFromIdx(p, idx);
     }, 120);
@@ -2179,6 +2510,29 @@ document.addEventListener("click", (e)=>{
   if(!btn) return;
 
   const action = btn.getAttribute("data-action");
+    if(action === "addPage"){
+    const key = btn.getAttribute("data-page") || "full";
+    addNextPage(p, key);
+    return;
+  }
+
+  if(action === "delPage"){
+    const key = btn.getAttribute("data-page") || "full";
+
+    // FULL: clear all pages but keep FULL
+    if(key === "full"){
+      p.pageKeysActive = [];
+      p.pageDeleted = p.pageDeleted || {};
+      for(const k of BASE_ORDER) p.pageDeleted[k] = 1;
+      touchProject(p);
+      renderBars();
+      showToast("Cleared pages");
+      return;
+    }
+
+    deletePageKey(p, key);
+    return;
+  }
   const p = getActiveProject();
 
   if(action === "addBarAfter"){
@@ -2264,7 +2618,8 @@ function renderBars(){
     fullTa.addEventListener("focus", refresh);
   }
 
-  const realIdx = Math.max(0, PAGE_ORDER.indexOf(p.activeSection || "full"));
+    const order = getActivePageOrder(p);
+  const realIdx = Math.max(0, order.indexOf(p.activeSection || "full"));
   snapToIdx(pager, realIdx + 1, "auto");
   setupCarouselPager(pager, p);
 }
