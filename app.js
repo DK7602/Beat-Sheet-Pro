@@ -2822,8 +2822,7 @@ function buildSplitExportText(p){
     }
     out.push("");
   }
-  return out.join("
-");
+return out.join("\n"); 
 }
 
 els.exportBtn?.addEventListener("click", ()=>{
