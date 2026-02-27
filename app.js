@@ -398,9 +398,14 @@ els.dockToggle?.addEventListener("click", ()=>{
 });
 
 /***********************
-✅ syllables
+✅ syllables (improved) + beat splitting (NO word splitting)
 ***********************/
-function normalizeWord(w){ return (w||"").toLowerCase().replace(/[^a-z']/g,""); }
+function normalizeWord(w){
+  return (w||"")
+    .toLowerCase()
+    .replace(/[’]/g,"'"); // normalize curly apostrophes
+}
+
 const SYLL_DICT = {
   "im":1,"i'm":1,"ive":1,"i've":1,"ill":1,"i'll":1,"id":1,"i'd":1,
   "dont":1,"don't":1,"cant":1,"can't":1,"wont":1,"won't":1,"aint":1,"ain't":1,
@@ -408,33 +413,71 @@ const SYLL_DICT = {
   "wanna":2,"gonna":2,"tryna":2,"lemme":2,"gotta":2,"kinda":2,"outta":2,
   "toyota":3,"hiphop":2,"gfunk":2,"gangsta":2,"birthday":2
 };
+
 function countSyllablesWord(word){
   if(!word) return 0;
+
+  // allow forced override: word(3)
   const forced = String(word).match(/\((\d+)\)\s*$/);
   if(forced) return Math.max(1, parseInt(forced[1],10));
-  let w = normalizeWord(word);
+
+  let raw = normalizeWord(word).trim();
+  if(!raw) return 0;
+
+  // keep hyphens as multi-part words (mother-in-law = sum(parts))
+  // keep apostrophes for dictionary match first
+  const dictKey = raw.replace(/[^a-z0-9'\-]/g,"");
+  if(SYLL_DICT[dictKey] != null) return SYLL_DICT[dictKey];
+
+  // numbers = 1 syllable placeholder (keeps it from going 0)
+  if(/^\d+$/.test(dictKey)) return 1;
+
+  // Split hyphenated words into parts and sum (no word splitting across beats)
+  const hyParts = dictKey.split(/-+/).filter(Boolean);
+  if(hyParts.length > 1){
+    const sum = hyParts.reduce((acc,p)=>acc + countSyllablesWord(p), 0);
+    return Math.max(1, sum);
+  }
+
+  // Now strip to letters only (remove apostrophes)
+  let w = dictKey.replace(/'/g,"").replace(/[^a-z]/g,"");
   if(!w) return 0;
-  if(SYLL_DICT[w] != null) return SYLL_DICT[w];
-  if(/^\d+$/.test(w)) return 1;
   if(w.length <= 3) return 1;
 
-  w = w.replace(/'/g,"");
-  if(/[^aeiou]e$/.test(w) && !/[^aeiou]le$/.test(w)) w = w.slice(0,-1);
+  // common silent endings
+  // -e silent (but not -le like "table")
+  if(/[^aeiouy]e$/.test(w) && !/[^aeiouy]le$/.test(w)) w = w.slice(0,-1);
 
+  // base vowel group count
   const groups = w.match(/[aeiouy]+/g);
   let count = groups ? groups.length : 0;
 
+  // add 1 for consonant + le (ta-ble, lit-tle)
+  if(/[^aeiouy]le$/.test(w)) count += 1;
+
+  // reduce for certain suffixes where a vowel group often collapses
   if(/(tion|sion|cion)$/.test(w)) count -= 1;
   if(/(ious|eous)$/.test(w)) count -= 1;
-  if(/[^aeiou]le$/.test(w)) count += 1;
+
+  // -ed often silent (walked, rocked) but NOT (wanted, ended)
+  if(/[^aeiouy][^aeiouy]ed$/.test(w) && !/(ted|ded)$/.test(w)) count -= 1;
+
+  // -es often silent (cakes, makes) but NOT (wishes, boxes, churches)
+  if(/[^aeiouy]es$/.test(w) && !/(ses|xes|zes|ches|shes)$/.test(w)) count -= 1;
 
   return Math.max(1, count || 1);
 }
+
 function countSyllablesLine(line){
   const clean = (line||"").replace(/[\/]/g," ").trim();
   if(!clean) return 0;
-  return clean.split(/\s+/).filter(Boolean).reduce((sum,w)=>sum+countSyllablesWord(w),0);
+
+  return clean
+    .split(/\s+/)
+    .filter(Boolean)
+    .reduce((sum,w)=>sum + countSyllablesWord(w), 0);
 }
+
 function syllGlowClass(n){
   if(!n) return "";
   if(n <= 6) return "red";
@@ -451,23 +494,7 @@ function splitBySlashes(text){
   const parts = (text||"").split("/").map(s=>s.trim());
   return [parts[0]||"", parts[1]||"", parts[2]||"", parts[3]||""];
 }
-function splitWordIntoChunks(word){
-  const raw = String(word);
-  const cleaned = raw.replace(/[^A-Za-z']/g,"");
-  if(!cleaned) return [raw];
-  const groups = cleaned.match(/[aeiouy]+|[^aeiouy]+/gi) || [cleaned];
-  const out = [];
-  for(const g of groups){
-    if(out.length && /^[^aeiouy]+$/i.test(g) && g.length <= 2) out[out.length-1] += g;
-    else out.push(g);
-  }
-  return out.length ? out : [raw];
-}
-function chunkSyllCount(chunk){
-  const w = String(chunk).toLowerCase().replace(/[^a-z']/g,"").replace(/'/g,"");
-  const groups = w.match(/[aeiouy]+/g);
-  return Math.max(1, (groups ? groups.length : 0) || 1);
-}
+
 function buildTargets(total){
   const base = Math.floor(total/4);
   const rem = total % 4;
@@ -479,9 +506,19 @@ function buildTargets(total){
   }
   return t;
 }
+
+/**
+ * Auto split into 4 beats WITHOUT splitting words.
+ * Strategy:
+ * - compute syllables per word
+ * - use targets, but only move a word to next beat if current beat already has something
+ *   and adding the word would overshoot current beat target.
+ * - single long word is allowed to overshoot if it must (beat is empty).
+ */
 function autoSplitSyllablesClean(text){
   const clean = (text||"").replace(/[\/]/g," ").trim();
   if(!clean) return ["","","",""];
+
   const words = clean.split(/\s+/).filter(Boolean);
   const sylls = words.map(w=>countSyllablesWord(w));
   const total = sylls.reduce((a,b)=>a+b,0);
@@ -492,56 +529,28 @@ function autoSplitSyllablesClean(text){
   const beatSyll = [0,0,0,0];
   let b = 0;
 
-  function pushWord(beatIndex, w){ beats[beatIndex].push(w); }
-
   for(let i=0;i<words.length;i++){
     const w = words[i];
     const s = sylls[i];
 
+    // advance past beats that are already "done"
     while(b < 3 && beatSyll[b] >= targets[b]) b++;
-    const rem2 = targets[b] - beatSyll[b];
 
-    if(s <= rem2 || b === 3){
-      pushWord(b, w);
-      beatSyll[b] += s;
-      continue;
-    }
+    const wouldOvershoot = (beatSyll[b] + s) > targets[b];
 
-    const chunks = splitWordIntoChunks(w);
-    const chunkS = chunks.map(chunkSyllCount);
-
-    let take = [];
-    let takeSyll = 0;
-    for(let c=0;c<chunks.length;c++){
-      if(takeSyll + chunkS[c] > rem2 && take.length > 0) break;
-      take.push(chunks[c]);
-      takeSyll += chunkS[c];
-      if(takeSyll >= rem2) break;
-    }
-    if(!take.length){
-      pushWord(b, w);
-      beatSyll[b] += s;
-      continue;
-    }
-
-    const left = take.join("");
-    const right = chunks.slice(take.length).join("");
-
-    pushWord(b, left);
-    beatSyll[b] += takeSyll;
-
-    if(b < 3){
+    // ✅ if it would overshoot AND we already have something in this beat AND we still have next beats,
+    // move the whole word to the next beat (NO splitting).
+    if(wouldOvershoot && beats[b].length > 0 && b < 3){
       b++;
-      pushWord(b, right);
-      beatSyll[b] += Math.max(1, s - takeSyll);
-    }else{
-      pushWord(b, right);
-      beatSyll[b] += Math.max(1, s - takeSyll);
     }
+
+    beats[b].push(w);
+    beatSyll[b] += s;
   }
 
   return beats.map(arr=>arr.join(" ").trim());
 }
+
 function computeBeats(text){
   if((text||"").includes("/")) return splitBySlashes(text);
   return autoSplitSyllablesClean(text);
