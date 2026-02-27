@@ -1,0 +1,948 @@
+<!-- index.html (FULL REPLACE v_HOBO_BEATSHEET_IDB_PAGER_CARDS_CARDPLUS_AUTOSCROLL_v3) -->
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>Beat Sheet Pro</title>
+
+  <link id="appManifest" rel="manifest" href="./manifest.webmanifest?v=BOOT">
+
+  <style>
+    *, *::before, *::after{ box-sizing:border-box; }
+
+    @font-face{
+      font-family: "DeardorfDrip";
+      src: url("./Deardorf%20Drip%20Demo.otf") format("opentype");
+      font-weight: 400;
+      font-style: normal;
+      font-display: swap;
+    }
+
+    :root{
+      --bg:#e9e9e9;
+      --card:#ffffff;
+      --stroke:rgba(0,0,0,.12);
+      --shadow:0 10px 24px rgba(0,0,0,.10);
+      --muted:#6b7280;
+
+      --green:#c9f6d6;
+      --snare:#bcdcff;
+      --hl:#ffe66a;
+
+      --red:#ff2b2b;
+      --yellow:#ffd54a;
+      --okgreen:#35d07f;
+
+      --hlBlue:#00E5FF;
+      --hlGreen:#39FF14;
+    }
+
+    html, body{ height:100%; }
+    body{
+      margin:0;
+      overflow:hidden;
+      background:var(--bg);
+      -webkit-text-size-adjust:100%;
+    }
+
+    .pager{
+      width:100%;
+      display:flex;
+      flex-wrap:nowrap;
+      overflow-x:auto;
+      overflow-y:hidden;
+      -webkit-overflow-scrolling: touch;
+      gap:0;
+      padding:0;
+      margin:0;
+      scroll-snap-type: x mandatory;
+      scroll-behavior: auto;
+      touch-action: pan-x pan-y pinch-zoom;
+    }
+    .pager::-webkit-scrollbar{ display:none; }
+
+    .page{
+      flex:0 0 100%;
+      width:100%;
+      max-width:100%;
+      overflow-x:hidden;
+      padding:0 0 26px;
+      scroll-snap-align: start;
+      scroll-snap-stop: always;
+    }
+
+    .pageTitle{
+      font-weight:1000;
+      letter-spacing:.6px;
+      font-size:12px;
+      color:rgba(0,0,0,.55);
+      text-transform:uppercase;
+      margin:0 0 8px;
+      padding:0 2px;
+    }
+/* ✅ Page title row with + / × on right */
+.pageTitleRow{
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:10px;
+  padding:0 2px;
+  margin:0 0 8px;
+  position:sticky;
+  top:0;
+  z-index:6;
+  background: var(--bg);
+  padding-top:6px;
+  padding-bottom:6px;
+}
+
+.pageTitleRow .pageTitle{
+  margin:0;
+  padding:0;
+}
+
+.pageTitleBtns{
+  display:flex;
+  align-items:center;
+  gap:8px;
+  flex:0 0 auto;
+}
+
+.pageTitleBtn{
+  width:34px;
+  height:34px;
+  padding:0;
+  border-radius:999px;
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  font-size:18px;
+  font-weight:1000;
+  line-height:1;
+  box-shadow:0 6px 14px rgba(0,0,0,.08);
+}
+
+.pageTitleBtn.del{
+  border-color: rgba(255, 43, 43, .55);
+  background: rgba(255, 43, 43, .10);
+  color:#7f1d1d;
+}
+    body.headerCollapsed main{ padding:0 !important; }
+    body.headerCollapsed #bars{ gap:0 !important; }
+
+    header{
+      position:fixed;
+      top:0; left:0; right:0;
+      z-index:20;
+      background:var(--bg);
+      border-bottom:1px solid rgba(0,0,0,.06);
+      padding:8px 10px;
+
+      max-height:28vh;
+      overflow:auto;
+      -webkit-overflow-scrolling:touch;
+      overflow-x:hidden;
+    }
+
+    body.fullMode header{ max-height:16vh; }
+    body.fullMode .miniCard{ display:flex; }
+
+    body.headerCollapsed header{
+      max-height:none;
+      overflow:hidden;
+      padding:8px 10px 10px;
+    }
+    body.headerCollapsed .titleRow,
+    body.headerCollapsed .topRow,
+    body.headerCollapsed .miniCard,
+    body.headerCollapsed .projRow{
+      display:none !important;
+    }
+    body.headerCollapsed .stickyTools{ margin-top:0; }
+    body.headerCollapsed .headerToggleRow{ display:flex; }
+
+    .titleRow{
+      display:flex;
+      align-items:center;
+      justify-content:space-between;
+      gap:6px;
+      margin-bottom:6px;
+      flex-wrap:nowrap;
+      min-width:0;
+      overflow:hidden;
+    }
+
+    .title{
+      flex:1 1 auto;
+      min-width:0;
+      margin:0;
+
+      height:64px;
+      display:flex;
+      align-items:center;
+      justify-content:flex-start;
+
+      font-family:"DeardorfDrip", system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
+      font-weight:400;
+      letter-spacing:.2px;
+      line-height:1;
+
+      white-space:nowrap;
+      overflow:hidden;
+      text-overflow:clip;
+
+      font-size: clamp(22px, 7.2vw, 44px);
+
+      color: var(--hlBlue);
+
+      text-shadow:
+        -1px 0   0 rgba(0,0,0,.85),
+         1px 0   0 rgba(0,0,0,.85),
+         0  -1px 0 rgba(0,0,0,.85),
+         0   1px 0 rgba(0,0,0,.85),
+        -1px -1px 0 rgba(0,0,0,.65),
+         1px -1px 0 rgba(0,0,0,.65),
+        -1px  1px 0 rgba(0,0,0,.65),
+         1px  1px 0 rgba(0,0,0,.65),
+        2px 1px 0 var(--hlGreen),
+        4px 2px 0 rgba(57,255,20,.85),
+        8px 5px 14px rgba(57,255,20,.28),
+        2px 2px 0 rgba(0,229,255,.95),
+        7px 6px 16px rgba(0,229,255,.22);
+
+      transform-origin:left center;
+      transform: scaleX(1.85);
+      padding-right:10px;
+    }
+
+    .small{
+      font-size:12px;
+      color:var(--muted);
+      font-weight:900;
+      white-space:nowrap;
+    }
+
+    .topRow{
+      display:flex;
+      gap:8px;
+      flex-wrap:wrap;
+      align-items:center;
+      margin-bottom:8px;
+    }
+
+    button, .pill, input, select{
+      border:1px solid var(--stroke);
+      background:#fff;
+      border-radius:14px;
+      padding:9px 11px;
+      font-size:14px;
+      box-shadow:0 6px 14px rgba(0,0,0,.05);
+    }
+    button{ font-weight:1000; cursor:pointer; user-select:none; white-space:nowrap; }
+
+    .pill{
+      display:flex;
+      align-items:center;
+      gap:8px;
+      padding:8px 10px;
+      flex:0 0 auto;
+    }
+    .pill label{
+      font-size:10px;
+      color:var(--muted);
+      font-weight:1000;
+      text-transform:uppercase;
+      letter-spacing:.6px;
+      line-height:1;
+      white-space:nowrap;
+    }
+
+    input[type="number"]{
+      width:52px;
+      font-weight:1000;
+      padding:8px 9px;
+      border-radius:12px;
+    }
+
+    .mp3Btn{
+      width:40px;
+      height:40px;
+      padding:0;
+      border-radius:999px;
+      display:flex;
+      align-items:center;
+      justify-content:center;
+      font-size:18px;
+      font-weight:1000;
+      line-height:1;
+      box-shadow:0 6px 14px rgba(0,0,0,.08);
+      flex:0 0 auto;
+    }
+
+    .headshotWrap{
+      position:relative;
+      width:64px;
+      height:64px;
+      display:flex;
+      align-items:center;
+      justify-content:center;
+      pointer-events:none;
+
+      flex:0 0 64px;
+      min-width:64px;
+    }
+    .bpmHeadshot{
+      width:64px;
+      height:64px;
+      object-fit:contain;
+      border-radius:16px;
+      background:transparent;
+      border:0;
+      box-shadow:none;
+      pointer-events:none;
+      display:block;
+    }
+    .eyeDot{
+      position:absolute;
+      width:10px;
+      height:10px;
+      border-radius:999px;
+      background: rgba(255, 43, 43, 0);
+      opacity:0;
+      transform: scale(.7);
+      transition: opacity .05s linear, transform .05s linear;
+      pointer-events:none;
+      top: 14px;
+    }
+    .eyeDot.left{ left: 21px; }
+    .eyeDot.right{ left: 36px; }
+    .eyeDot.on{
+      opacity:1;
+      background: var(--red);
+      transform: scale(1);
+      box-shadow: 0 0 10px 4px rgba(255, 43, 43, .55);
+    }
+
+    .stickyTools{
+      display:grid;
+      grid-template-columns: repeat(6, 1fr);
+      gap:10px;
+      align-items:stretch;
+      margin-top:8px;
+    }
+
+    .drumBtn{
+      display:flex; align-items:center; justify-content:center;
+      font-weight:1000;
+      border-radius:16px;
+      border:2px solid rgba(0,0,0,.12);
+      background:#fff; color:#111;
+      padding:8px 0;
+      min-height:50px;
+      font-size:16px;
+      line-height:1;
+    }
+    .drumBtn.active{
+      background:#111;
+      color:#fff;
+      border-color:#111;
+    }
+    .drumBtn.running{
+      box-shadow: 0 0 0 4px rgba(0,0,0,.08);
+    }
+
+    .autoBtn{
+      display:flex; align-items:center; justify-content:center;
+      font-weight:1000;
+      border-radius:16px;
+      border:2px solid rgba(0,0,0,.12);
+      background:#fff; color:#111;
+      padding:8px 0;
+      min-height:50px;
+      font-size:14px;
+      line-height:1;
+    }
+    .autoBtn.on{
+      border-color: rgba(53, 208, 127, .95);
+      box-shadow: 0 0 0 4px rgba(53, 208, 127, .18);
+    }
+
+    .recordBtn{
+      display:flex; align-items:center; justify-content:center;
+      font-weight:1000; border-radius:16px;
+      border:2px solid var(--red);
+      background:var(--red); color:#fff;
+      padding:8px 0;
+      min-height:50px;
+      font-size:13px;
+    }
+    .recordBtn.recOn{ background:#111; border-color:#111; }
+
+    .miniCard{
+      background:#fff;
+      border:1px solid var(--stroke);
+      border-radius:16px;
+      padding:10px 12px;
+      box-shadow:0 6px 14px rgba(0,0,0,.05);
+      display:flex;
+      flex-direction:column;
+      gap:10px;
+      min-width:0;
+      margin-top:10px;
+    }
+    .wideInput{
+      width:100%;
+      padding:10px 12px;
+      font-size:15px;
+      font-weight:1000;
+      border-radius:14px;
+    }
+
+    main{
+      position:fixed;
+      left:0; right:0; bottom:0;
+      top:var(--headerH, 220px);
+      overflow:hidden;
+      padding:10px 10px 26px;
+    }
+
+    #bars{
+      height:100%;
+      overflow-y:auto;
+      -webkit-overflow-scrolling:touch;
+      display:flex;
+      flex-direction:column;
+      gap:10px;
+    }
+
+    .toast{
+      position:fixed;
+      left:50%;
+      bottom:18px;
+      transform:translateX(-50%);
+      background:#111;
+      color:#fff;
+      padding:10px 14px;
+      border-radius:14px;
+      opacity:0;
+      pointer-events:none;
+      transition:opacity .2s ease;
+      font-weight:1000;
+      z-index:50;
+    }
+    .toast.show{ opacity:1; }
+
+    .rhymeDock{
+      position:fixed;
+      left:10px;
+      right:10px;
+      bottom:10px;
+      z-index:100;
+      background:#fff;
+      border:1px solid rgba(0,0,0,.12);
+      border-radius:18px;
+      box-shadow:0 16px 40px rgba(0,0,0,.18);
+      padding:10px 12px;
+      transform: translateZ(0);
+    }
+    .rhymeDock.dockHidden{
+      left:auto !important;
+      right:10px !important;
+      width:58px;
+      height:58px;
+      padding:0;
+      border-radius:999px;
+      display:flex;
+      align-items:center;
+      justify-content:center;
+    }
+    .rhymeDock.dockHidden .dockTitle,
+    .rhymeDock.dockHidden .dockBase{ display:none !important; }
+    .rhymeDock.dockHidden .rhymeWrap{ display:none !important; }
+    .rhymeDock.dockHidden .dockTop{
+      margin:0 !important;
+      width:100%;
+      justify-content:center;
+      align-items:center;
+    }
+    .rhymeDock.dockHidden .dockHideBtn{
+      width:46px;
+      height:46px;
+      padding:0;
+      border-radius:999px;
+      font-size:18px;
+      line-height:1;
+      display:flex;
+      align-items:center;
+      justify-content:center;
+      box-shadow:0 10px 24px rgba(0,0,0,.12);
+      white-space:nowrap;
+    }
+
+    .dockTop{
+      display:flex;
+      align-items:baseline;
+      justify-content:space-between;
+      gap:12px;
+      margin-bottom:8px;
+    }
+    .dockTitle{
+      font-size:11px;
+      font-weight:1000;
+      color:var(--muted);
+      text-transform:uppercase;
+      letter-spacing:.6px;
+    }
+    .dockBase{
+      font-size:14px;
+      font-weight:1000;
+      white-space:nowrap;
+      overflow:hidden;
+      text-overflow:ellipsis;
+      max-width:60%;
+    }
+    .dockHideBtn{
+      padding:6px 10px;
+      border-radius:999px;
+      font-size:12px;
+      font-weight:1000;
+      box-shadow:0 4px 10px rgba(0,0,0,.04);
+      white-space:nowrap;
+    }
+    .rhymeWrap{
+      display:flex;
+      gap:8px;
+      align-items:center;
+      overflow:auto;
+      -webkit-overflow-scrolling: touch;
+      white-space:nowrap;
+      padding-bottom:2px;
+    }
+    .rhymeChip{
+      flex:0 0 auto;
+      border:1px solid rgba(0,0,0,.12);
+      background:#fff;
+      border-radius:999px;
+      padding:7px 10px;
+      font-weight:1000;
+      font-size:13px;
+      cursor:pointer;
+      box-shadow:0 4px 10px rgba(0,0,0,.04);
+    }
+
+    .bar{
+      background:var(--card);
+      border:1px solid var(--stroke);
+      border-radius:18px;
+      padding:10px;
+      box-shadow:var(--shadow);
+    }
+
+    .bar.barActive{
+      outline:3px solid rgba(0,0,0,.10);
+      outline-offset:2px;
+    }
+
+    .barTop{
+      display:flex;
+      align-items:center;
+      justify-content:space-between;
+      margin-bottom:8px;
+      gap:10px;
+    }
+    .barLeft{
+      display:flex;
+      align-items:center;
+      gap:10px;
+      min-width:0;
+    }
+
+    .barRightBtns{
+      display:flex;
+      align-items:center;
+      gap:8px;
+      flex:0 0 auto;
+    }
+
+    .barNum{
+      width:34px;
+      height:34px;
+      border-radius:12px;
+      border:1px solid rgba(0,0,0,.14);
+      background:#fff;
+      display:flex;
+      align-items:center;
+      justify-content:center;
+      font-weight:1000;
+      flex:0 0 auto;
+    }
+    .syllPill{
+      display:flex;
+      align-items:center;
+      gap:10px;
+      padding:8px 12px;
+      border-radius:999px;
+      border:2px solid rgba(0,0,0,.12);
+      background:#fff;
+      font-weight:1000;
+      min-width:160px;
+      flex:0 0 auto;
+    }
+    .syllPill .lbl{
+      font-size:10px;
+      color:rgba(0,0,0,.55);
+      text-transform:uppercase;
+      letter-spacing:.7px;
+    }
+    .syllPill .val{ font-size:16px; }
+    .syllPill.green{ border-color: rgba(53, 208, 127, .9); box-shadow: 0 0 0 4px rgba(53, 208, 127, .20); }
+    .syllPill.yellow{ border-color: rgba(255, 213, 74, .95); box-shadow:0 0 0 4px rgba(255, 213, 74, .22); }
+    .syllPill.red{ border-color: rgba(255, 43, 43, .9); box-shadow:0 0 0 4px rgba(255, 43, 43, .18); }
+
+    /* ✅ Card "+" button (simple +) */
+    .barPlusBtn{
+      width:38px;
+      height:38px;
+      padding:0;
+      border-radius:999px;
+      display:flex;
+      align-items:center;
+      justify-content:center;
+      font-size:20px;
+      font-weight:1000;
+      line-height:1;
+      border:1px solid rgba(0,0,0,.22);
+      background:#fff;
+      color:#111;
+      box-shadow:0 6px 14px rgba(0,0,0,.08);
+      flex:0 0 auto;
+      cursor:pointer;
+    }
+
+    .barDelBtn{
+      width:38px;
+      height:38px;
+      padding:0;
+      border-radius:999px;
+      display:flex;
+      align-items:center;
+      justify-content:center;
+      font-size:20px;
+      font-weight:1000;
+      line-height:1;
+      border:1px solid rgba(255, 43, 43, .55);
+      background: rgba(255, 43, 43, .10);
+      color:#7f1d1d;
+      box-shadow:0 6px 14px rgba(0,0,0,.08);
+      flex:0 0 auto;
+      cursor:pointer;
+    }
+
+    textarea{
+      width:100%;
+      min-height:96px;
+      resize:vertical;
+      padding:12px;
+      border-radius:16px;
+      border:1px solid rgba(0,0,0,.18);
+      background:var(--green);
+      font-size:18px;
+      line-height:1.25;
+      font-weight:900;
+      outline:none;
+    }
+
+    .beats{
+      margin-top:10px;
+      display:grid;
+      grid-template-columns:repeat(4,1fr);
+      gap:10px;
+    }
+    .beat{
+      min-height:70px;
+      border-radius:16px;
+      border:1px solid rgba(0,0,0,.14);
+      background:#fff;
+      padding:10px;
+      font-weight:1000;
+      overflow-wrap:anywhere;
+    }
+    .beat.snare{ background:var(--snare); }
+
+    .beat.flash{
+      background:var(--hl) !important;
+      box-shadow:0 0 0 4px rgba(255,230,106,.45);
+    }
+
+    .fullBox{
+      background:#fff;
+      border:1px solid var(--stroke);
+      border-radius:18px;
+      padding:12px;
+      box-shadow:var(--shadow);
+      font-weight:900;
+      line-height:1.35;
+      font-size:15px;
+    }
+    .fullSub{
+      color:var(--muted);
+      font-weight:1000;
+      font-size:12px;
+      margin-bottom:8px;
+    }
+    .fullEditor{
+      width:100%;
+      height:78vh;
+      min-height:520px;
+      resize:vertical;
+      padding:12px;
+      border-radius:16px;
+      border:1px solid rgba(0,0,0,.18);
+      background:#fff;
+      font-size:16px;
+      line-height:1.35;
+      font-weight:900;
+      outline:none;
+      white-space:pre-wrap;
+      overflow:auto;
+      -webkit-overflow-scrolling:touch;
+    }
+
+    .audioItem{
+      display:flex;
+      gap:10px;
+      align-items:center;
+      justify-content:space-between;
+      flex-wrap:wrap;
+      margin-top:8px;
+    }
+    .audioLabel{
+      font-weight:1000;
+      overflow:hidden;
+      text-overflow:ellipsis;
+      white-space:nowrap;
+      max-width:100%;
+    }
+    .iconRow{
+      display:flex;
+      gap:8px;
+      align-items:center;
+      flex:0 0 auto;
+    }
+    .iconBtn{
+      width:38px;
+      height:38px;
+      padding:0;
+      border-radius:999px;
+      display:flex;
+      align-items:center;
+      justify-content:center;
+      font-size:16px;
+      font-weight:1000;
+      line-height:1;
+      box-shadow:0 6px 14px rgba(0,0,0,.08);
+    }
+    .iconBtn.play{ border-color: rgba(53, 208, 127, .65); background: rgba(53, 208, 127, .18); color:#0f5132; }
+    .iconBtn.stop{ border-color: rgba(0,0,0,.35); background: rgba(0,0,0,.08); color:#111; }
+    .iconBtn.delete{ border-color: rgba(255, 43, 43, .55); background: rgba(255, 43, 43, .12); color:#7f1d1d; }
+
+    .headerToggleRow{
+      display:none;
+      align-items:center;
+      justify-content:flex-end;
+      margin-bottom:8px;
+    }
+    .headerToggleBtn{
+      padding:6px 10px;
+      border-radius:999px;
+      font-size:12px;
+      font-weight:1000;
+      box-shadow:0 4px 10px rgba(0,0,0,.04);
+      white-space:nowrap;
+    }
+.refreshBtn{
+  width:34px;
+  height:34px;
+  padding:0;
+  border-radius:999px;
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  font-size:16px;
+  line-height:1;
+}
+
+    .projRow{
+      display:flex;
+      gap:8px;
+      align-items:center;
+      width:100%;
+      margin-bottom:8px;
+      flex-wrap:nowrap;
+      overflow:hidden;
+      min-width:0;
+    }
+    .projSelect{
+      font-weight:1000;
+      flex:1 1 auto;
+      min-width:0;
+      max-width:220px;
+      padding-right:8px;
+    }
+    .projIconBtn{
+      width:38px;
+      height:38px;
+      padding:0;
+      border-radius:999px;
+      display:flex;
+      align-items:center;
+      justify-content:center;
+      font-size:16px;
+      font-weight:1000;
+      line-height:1;
+      flex:0 0 auto;
+      box-shadow:0 6px 14px rgba(0,0,0,.08);
+    }
+
+    #mp3Input{ display:none; }
+  </style>
+</head>
+
+<body>
+  <header>
+    <div class="headerToggleRow">
+      <button id="headerToggle" class="headerToggleBtn" type="button">Show</button>
+    </div>
+
+    <div class="titleRow">
+      <h1 class="title">Beat Sheet Pro</h1>
+
+      <div class="headshotWrap" aria-hidden="true">
+        <img class="bpmHeadshot" src="./headshot.png" alt="">
+        <span id="eyeL" class="eyeDot left"></span>
+        <span id="eyeR" class="eyeDot right"></span>
+      </div>
+    </div>
+
+    <div class="topRow">
+      <button id="exportBtn" type="button">Export</button>
+      <button id="saveBtn" type="button">Save</button>
+
+      <button id="mp3Btn" class="mp3Btn" type="button" aria-label="Upload audio" title="Upload audio to Recordings">⬆</button>
+      <input id="mp3Input" type="file" accept="audio/*" />
+
+      <div class="pill">
+        <label>BPM</label>
+        <input id="bpm" type="number" min="40" max="240" value="95" />
+      </div>
+
+<button id="headerToggle2" class="headerToggleBtn" type="button">Hide</button>
+
+<button id="refreshBtn"
+  class="headerToggleBtn refreshBtn"
+  type="button"
+  title="Refresh">
+  ⟳
+</button>
+
+      <div class="small" id="statusText" style="flex:1 1 auto; text-align:right;"></div>
+    </div>
+
+    <div class="projRow">
+      <select id="projectPicker" class="projSelect" aria-label="Project">
+        <option>Loading…</option>
+      </select>
+
+      <button id="editProjectBtn"   class="projIconBtn" type="button" title="Edit"   aria-label="Edit">✏️</button>
+      <button id="newProjectBtn"    class="projIconBtn" type="button" title="New"    aria-label="New">＋</button>
+      <button id="copyProjectBtn"   class="projIconBtn" type="button" title="Copy"   aria-label="Copy">C</button>
+      <button id="deleteProjectBtn" class="projIconBtn" type="button" title="Delete" aria-label="Delete">✕</button>
+    </div>
+
+    <div class="stickyTools">
+      <button id="drum1Btn" class="drumBtn" type="button" aria-label="Drum 1">🥁</button>
+      <button id="drum2Btn" class="drumBtn" type="button" aria-label="Drum 2">🥁</button>
+      <button id="drum3Btn" class="drumBtn" type="button" aria-label="Drum 3">🥁</button>
+      <button id="drum4Btn" class="drumBtn" type="button" aria-label="Drum 4">🥁</button>
+
+      <button id="autoScrollBtn" class="autoBtn" type="button" aria-label="Auto Scroll" title="Auto Scroll">Scroll</button>
+
+      <button id="recordBtn" class="recordBtn" type="button">Record</button>
+    </div>
+
+    <div class="miniCard">
+      <div style="display:flex;align-items:baseline;justify-content:space-between;gap:10px;">
+        <div style="font-size:11px;font-weight:1000;color:var(--muted);text-transform:uppercase;letter-spacing:.6px;">Recording</div>
+        <div id="recHint" style="font-size:13px;font-weight:1000;max-width:65%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">voice + metronome</div>
+      </div>
+
+      <input id="recordName" class="wideInput" type="text" placeholder="Recording name…" />
+      <div id="recordingsList"></div>
+    </div>
+  </header>
+
+  <main>
+    <div id="bars"></div>
+  </main>
+
+  <div id="rhymeDock" class="rhymeDock">
+    <div class="dockTop">
+      <div class="dockTitle">Rhymes</div>
+      <div class="dockBase" id="rhymeBase">Tap into a beat…</div>
+      <button id="dockToggle" type="button" class="dockHideBtn">Hide</button>
+    </div>
+    <div class="rhymeWrap" id="rhymeList">
+      <span class="small">Rhymes appear for last word in previous beat box.</span>
+    </div>
+  </div>
+
+  <div class="toast" id="toast">Saved</div>
+
+  <script>
+  (function(){
+    const repo = (location.pathname.split("/").filter(Boolean)[0] || "");
+    const base = repo ? ("/" + repo) : "";
+    const v = "SHARED_20260216_BEATSHEET_CARDPLUS_AUTOSCROLL_v3";
+
+    const man = document.getElementById("appManifest");
+    if(man) man.href = base + "/manifest.webmanifest?v=" + encodeURIComponent(v);
+
+    const s = document.createElement("script");
+    s.src = base + "/app.js?v=" + encodeURIComponent(v);
+    s.defer = true;
+    document.body.appendChild(s);
+  })();
+  </script>
+
+  <script src="./lame.min.js?v=1"></script>
+  <script>
+  (function(){
+    function show(msg){
+      let box = document.getElementById("errBox");
+      if(!box){
+        box = document.createElement("div");
+        box.id = "errBox";
+        box.style.cssText =
+          "position:fixed;left:10px;right:10px;top:10px;z-index:99999;" +
+          "background:#111;color:#fff;padding:10px 12px;border-radius:12px;" +
+          "font:12px/1.35 system-ui,Segoe UI,Roboto,Arial;white-space:pre-wrap;
+      overflow:auto;
+      -webkit-overflow-scrolling:touch;" +
+          "max-height:40vh;overflow:auto;opacity:.95";
+        document.body.appendChild(box);
+      }
+      box.textContent = msg;
+    }
+    window.addEventListener("error", (e)=>{
+      show("JS ERROR:\n" + (e.message || "Unknown") + "\n\n" + (e.filename||"") + ":" + (e.lineno||"") + ":" + (e.colno||""));
+    });
+    window.addEventListener("unhandledrejection", (e)=>{
+      const r = e.reason;
+      show("PROMISE ERROR:\n" + (r && (r.stack || r.message) ? (r.stack || r.message) : String(r)));
+    });
+  })();
+    
+  </script>
+</body>
+</html>
