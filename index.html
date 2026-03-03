@@ -38,7 +38,7 @@
       --hlGreen:#39FF14;
     }
 
-    html, body{ height:100%; }
+    html, body{ height:100%; overscroll-behavior-y: none; }
     body{
       margin:0;
       overflow:hidden;
@@ -51,7 +51,7 @@
       display:flex;
       flex-wrap:nowrap;
       overflow-x:auto;
-      overflow-y:hidden;
+      overflow-y:visible;
       -webkit-overflow-scrolling: touch;
       gap:0;
       padding:0;
@@ -129,23 +129,26 @@
   color:#7f1d1d;
 }
     body.headerCollapsed main{ padding:0 !important; }
-    body.headerCollapsed #bars{ gap:0 !important; }
+    body.headerCollapsed #bars{ overscroll-behavior-y: contain;  gap:0 !important; }
+  #belowHeader{ width:100%; }
 
-    header{
-      position:fixed;
+    header{position:fixed;
       top:0; left:0; right:0;
       z-index:20;
       background:var(--bg);
       border-bottom:1px solid rgba(0,0,0,.06);
-      padding:8px 10px;
+      padding:0;
 
-      max-height:28vh;
-      overflow:auto;
-      -webkit-overflow-scrolling:touch;
-      overflow-x:hidden;
+      /* The JS sets header height to the bottom of the drum row (stickyTools)
+         so the main content starts right below it (no cut-off / no gray gap). */
+      max-height:none;
+      overflow:hidden;
     }
+.headerScroll{height:100%; overflow-y:auto; -webkit-overflow-scrolling:touch; padding:8px 10px 14px; box-sizing:border-box; }
+.headerScroll::-webkit-scrollbar{width:0;height:0;}
 
-    body.fullMode header{ max-height:16vh; }
+
+    body.fullMode header{ max-height:none; }
     body.fullMode .miniCard{ display:flex; }
 
     body.headerCollapsed header{
@@ -407,7 +410,7 @@
       padding:10px 10px 26px;
     }
 
-    #bars{
+    #bars{ overscroll-behavior-y: contain; 
       height:100%;
       overflow-y:auto;
       -webkit-overflow-scrolling:touch;
@@ -685,6 +688,22 @@
       line-height:1.35;
       font-size:15px;
     }
+/* SRP-style full view: one continuous scroll (no nested scrolling window) */
+.page[data-page-key="full"] .fullSongFlow{
+  padding: 12px 12px 16px;
+  background:#fff;
+  border-radius:18px;
+  margin: 10px 10px 14px;
+  box-shadow:0 10px 26px rgba(0,0,0,.08);
+}
+
+.pageTitlePill.sectionPill{
+  width:min(300px, 62%);
+  padding:9px 12px;
+  font-size:16px;
+}
+
+
     .fullSub{
       color:var(--muted);
       font-weight:1000;
@@ -711,6 +730,72 @@
       overflow:hidden;
       touch-action: pan-y;
     }
+
+
+/* ---------- SRP-style FULL SONG VIEW flow ---------- */
+.fullSongFlow{
+  display:flex;
+  flex-direction:column;
+  gap:14px;
+}
+.fullSection{
+  background:transparent;
+  border:none;
+  border-radius:0;
+  padding:6px 0 10px;
+  box-shadow:none;
+}
+.fullSectionHeader{
+  display:flex;
+  align-items:center;
+  gap:10px;
+  margin-bottom:10px;
+}
+.fullSectionHeader .line{
+  flex:1;
+  height:2px;
+  background:rgba(0,0,0,.14);
+  border-radius:999px;
+}
+.sectionPill{
+  width:min(320px, 62%);
+  text-align:center;
+  font-weight:1000;
+  border-radius:999px;
+  padding:10px 12px;
+  border:2px solid rgba(0,0,0,.14);
+  background: var(--yellow);
+  box-shadow:0 10px 24px rgba(0,0,0,.10);
+}
+.sectionPill::placeholder{ color: rgba(0,0,0,.45); }
+
+.fullSectionBody{
+  width:100%;
+  padding:0;
+  margin-top:8px;
+  font-size:18px;
+  line-height:1.45;
+  font-weight:900;
+  white-space:pre-wrap;
+  outline:none;
+  touch-action: pan-y;
+}
+.fullSectionEditor{border:0;background:transparent;resize:none;overflow:hidden;width:100%;}
+.fullSectionBtnRow{display:flex;justify-content:center;gap:12px;margin:10px 0 2px;}
+.fullSectionBtnRow .smallBtn{width:38px;height:38px;border-radius:10px;border:1px solid #bbb;background:#fff;font-weight:900;font-size:20px;}
+.fullSectionBtnRow .fullDelBtn{border-color:#ff6b6b;color:#b00000;}
+.fullSectionBody:empty:before{
+  content:"Lyrics / chords...";
+  color:#999;
+}
+
+.fullSectionBtns{
+  display:flex;
+  justify-content:center;
+  gap:10px;
+  margin-top:10px;
+}
+
 
     .audioItem{
       display:flex;
@@ -809,7 +894,9 @@
     }
 
     #mp3Input{ display:none; }
-  </style>
+  
+#barsInner{width:100%;}
+</style>
 </head>
 
 <body>
@@ -817,6 +904,8 @@
     <div class="headerToggleRow">
       <button id="headerToggle" class="headerToggleBtn" type="button">Show</button>
     </div>
+
+    <div id="headerScroll" class="headerScroll">
 
     <div class="titleRow">
       <h1 class="title">Beat Sheet Pro</h1>
@@ -883,10 +972,12 @@
       <input id="recordName" class="wideInput" type="text" placeholder="Recording name…" />
       <div id="recordingsList"></div>
     </div>
-  </header>
+  
+  </div>
+</header>
 
   <main>
-    <div id="bars"></div>
+    <div id="bars"><div id="belowHeader"></div><div id="barsInner"></div></div>
   </main>
 
   <div id="rhymeDock" class="rhymeDock">
@@ -906,7 +997,7 @@
   (function(){
     const repo = (location.pathname.split("/").filter(Boolean)[0] || "");
     const base = repo ? ("/" + repo) : "";
-    const v = "SHARED_20260216_BEATSHEET_CARDPLUS_AUTOSCROLL_v3";
+    const v = 'SHARED_20260303_AUTOSCROLL_START_CARD_IN_VIEW_FIX_v12';
 
     const man = document.getElementById("appManifest");
     if(man) man.href = base + "/manifest.webmanifest?v=" + encodeURIComponent(v);
@@ -929,9 +1020,7 @@
         box.style.cssText =
           "position:fixed;left:10px;right:10px;top:10px;z-index:99999;" +
           "background:#111;color:#fff;padding:10px 12px;border-radius:12px;" +
-          "font:12px/1.35 system-ui,Segoe UI,Roboto,Arial;white-space:pre-wrap;
-      overflow:auto;
-      -webkit-overflow-scrolling:touch;" +
+          "font:12px/1.35 system-ui,Segoe UI,Roboto,Arial;white-space:pre-wrap;overflow:auto;-webkit-overflow-scrolling:touch;" +
           "max-height:40vh;overflow:auto;opacity:.95";
         document.body.appendChild(box);
       }
