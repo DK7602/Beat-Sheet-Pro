@@ -1,4 +1,4 @@
-/* Beat Sheet Pro - app.js (FULL REPLACE v_IDB_AUDIO_PAGER_CARDS_CARDPLUS_AUTOSCROLL_v4_TEXTPAGES) */
+/* Beat Sheet Pro - app.js (FULL REPLACE v22_AUTOSCROLL_START_CARD_IN_VIEW_FIX */
 (() => {
 "use strict";
 
@@ -7,11 +7,39 @@ function syncHeaderHeightVar(){
   if(!header) return;
 
   const measure = ()=>{
-    const h = Math.ceil(header.getBoundingClientRect().height || 0);
+    const collapsed = document.body.classList.contains("headerCollapsed");
+    let h = 0;
+
+    if(!collapsed){
+      // Reserve space down to the drum row (.stickyTools) so the main view starts right below it.
+      const sticky = header.querySelector(".stickyTools") || document.querySelector(".stickyTools");
+      if(sticky){
+        const r = sticky.getBoundingClientRect();
+        h = Math.ceil(r.bottom); // bottom relative to viewport
+      } else {
+        h = Math.ceil(header.getBoundingClientRect().height || 0);
+      }
+
+      // ✅ Make the header itself extend exactly to the bottom of the drum row
+      // so nothing looks "cut off" and there isn't a gray gap.
+      header.style.height = h + "px";
+      const hs = document.getElementById("headerScroll");
+      if (hs){ hs.style.height = "100%"; hs.style.overflowY = (collapsed ? "hidden" : "auto"); }
+
+      header.style.maxHeight = "none";
+      header.style.overflow = "hidden";
+    } else {
+      // Collapsed: let CSS handle it
+      h = Math.ceil(header.getBoundingClientRect().height || 0);
+      header.style.height = "";
+      header.style.maxHeight = "";
+      header.style.overflow = "";
+    }
+
     document.documentElement.style.setProperty("--headerH", h + "px");
   };
 
-  // Measure now, then again after layout settles (fixes large blank space after Show/Hide)
+  // Run a few times to catch font/image/layout shifts
   measure();
   requestAnimationFrame(measure);
   setTimeout(measure, 60);
@@ -65,7 +93,7 @@ const els = {
   headerToggle2: need("headerToggle2"),
   refreshBtn: need("refreshBtn"),
 
-  bars: need("bars"),
+  bars: need("barsInner"),
 
   recordBtn: need("recordBtn"),
   recordName: need("recordName"),
@@ -139,17 +167,23 @@ function makeExtraKey(n){ return `extra${n}`; }
 
 // FULL headings set (used by rhyme logic to skip headings)
 function getHeadingTextForKey(p, key){
-  if(key === "full") return "FULL";
-  const base = BASE_SECTION_DEFS.find(s=>s.key===key);
-  if(base) return base.title.toUpperCase();
+  if(key === "full") return "Full Song View";
 
-  // extras
   const sec = p?.sections?.[key];
-  const t = (sec?.title || "").trim();
-  if(t) return t.toUpperCase();
+  const custom = (sec?.title || "").trim();
+  if(custom) return custom;
+
+  const base = BASE_SECTION_DEFS.find(s=>s.key===key);
+  if(base) return base.title;
+
+  // extras fallback label (will still show placeholder in inputs)
   const n = extraIndex(key) || 1;
-  return `EXTRA ${n}`;
+  return `Extra ${n}`;
 }
+
+
+
+function relocateMiniCard(){ /* keep miniCard inside header; no relocation */ }
 
 function getFullOrder(p){
   // FULL always shows base headings + any extras that have been created/known
@@ -218,6 +252,8 @@ function getProjectBpm(){
 ***********************/
 let autoScrollOn = false;
 
+
+let autoScrollStartIdx = 0;
 function loadAutoScroll(){
   try{ return localStorage.getItem(AUTOSCROLL_KEY) === "1"; }catch{ return false; }
 }
@@ -231,12 +267,82 @@ function updateAutoScrollBtn(){
   els.autoScrollBtn.title = autoScrollOn ? "Auto Scroll: ON" : "Auto Scroll: OFF";
 }
 function setAutoScroll(v){
+  const turningOn = !!v && !autoScrollOn;
   autoScrollOn = !!v;
+
+  // Always stop the silent clock first; we only re-start it when needed.
+  stopPracticeScroll();
+
   lastAutoScrollToken = null;
   clearAllPracticeAndActive();
   saveAutoScroll(autoScrollOn);
   updateAutoScrollBtn();
   showToast(autoScrollOn ? "Auto Scroll ON" : "Auto Scroll OFF");
+
+  const p = (typeof getActiveProject === "function") ? getActiveProject() : null;
+  if(p){
+    p.playback = p.playback || {};
+  }
+
+  if(!autoScrollOn){
+    // Just disable visuals; do NOT restart any silent clock.
+    if(playback){
+      playback.beatOffsetBeats = 0;
+    }
+    if(p){
+      p.playback.anchorPageKey = null;
+      p.playback.seqStartOffset = 0;
+    }
+    autoScrollMetroOffset16 = 0;
+
+    // Persist toggle state without assuming saveProject exists in global scope
+    if(p){
+      try{ touchProject(p); }catch(e){}
+    }
+    return;
+  }
+
+  if(turningOn){
+    // Anchor to the page + card currently IN VIEW (do not jump back to page 1).
+    // We derive the real visible page from the pager's current index and then
+    // start at the first visible bar card on that page.
+    if(p){
+      const visibleKey = getVisibleRealPageKeyFromPager(p) || p.activeSection || null;
+      p.playback.anchorPageKey = visibleKey;
+      // keep activeSection in sync so the highlight engine doesn't snap back
+      if(visibleKey && p.activeSection !== visibleKey){
+        p.activeSection = visibleKey;
+      }
+      const firstVisibleBarIdx = getFirstVisibleBarIdxInActivePage();
+      p.playback.seqStartOffset = computeSeqStartOffsetFromAnchor(p, visibleKey, firstVisibleBarIdx);
+    }
+
+    // If user enables auto-scroll while audio is already playing,
+    // start counting beats from ZERO at that moment (do NOT jump ahead).
+    if(playback && playback.isPlaying){
+      const t = (playerEl && typeof playerEl.currentTime === "number") ? playerEl.currentTime : 0;
+      const bpmNow = getProjectBpm?.() || +((p && p.bpm) || (els.bpm && els.bpm.value) || 120);
+      playback.beatOffsetBeats = (t * bpmNow) / 60;
+    }else{
+      if(playback) playback.beatOffsetBeats = 0;
+    }
+
+    // If drums are already running, re-zero the visual beat counter too.
+    if(typeof metroBeat16 === "number" && metroOn){
+      autoScrollMetroOffset16 = metroBeat16;
+    }else{
+      autoScrollMetroOffset16 = 0;
+    }
+
+    // If no audio + no drums, run a silent clock so Scroll still works.
+    if(!metroOn && !(playback && playback.isPlaying)){
+      startPracticeScroll();
+    }
+  }
+
+  if(p){
+    try{ touchProject(p); }catch(e){}
+  }
 }
 els.autoScrollBtn?.addEventListener("click", ()=> setAutoScroll(!autoScrollOn));
 
@@ -406,6 +512,8 @@ function saveHeaderCollapsed(isCollapsed2){
 }
 function setHeaderCollapsed(isCol){
   document.body.classList.toggle("headerCollapsed", !!isCol);
+  relocateMiniCard();
+  syncHeaderHeightVar();
   if(els.headerToggle)  els.headerToggle.textContent  = isCol ? "Show" : "Hide";
   if(els.headerToggle2) els.headerToggle2.textContent = isCol ? "Show" : "Hide";
   saveHeaderCollapsed(!!isCol);
@@ -637,6 +745,9 @@ function lastWord(str){
   const parts = s.split(/\s+/).filter(Boolean);
   return parts.length ? parts[parts.length-1].replace(/^-+|-+$/g,"") : "";
 }
+
+function escAttr(s){ return escapeHtml(s); }
+
 function caretBeatIndex(text, caretPos){
   const before = (text||"").slice(0, Math.max(0, caretPos||0));
   const count = (before.match(/\//g) || []).length;
@@ -740,9 +851,9 @@ function blankSections(){
   for(const s of BASE_SECTION_DEFS){
     sections[s.key] = {
       key: s.key,
-      title: s.title,       // fixed title for base
+      title: "",       // user editable (no auto-fill)
       bars: [{ text:"" }],
-      titleEditable: false
+      titleEditable: true
     };
   }
 
@@ -793,13 +904,16 @@ function repairProject(p){
   // ✅ ensure base sections exist
   for(const def of BASE_SECTION_DEFS){
     if(!p.sections[def.key] || typeof p.sections[def.key] !== "object"){
-      p.sections[def.key] = { key:def.key, title:def.title, bars:[{text:""}], titleEditable:false };
+      // ✅ base sections exist but titles stay user-editable (no auto-fill)
+      p.sections[def.key] = { key:def.key, title:"", bars:[{text:""}], titleEditable:true };
     }
     if(!Array.isArray(p.sections[def.key].bars)) p.sections[def.key].bars = [{ text:"" }];
     if(p.sections[def.key].bars.length === 0) p.sections[def.key].bars = [{ text:"" }];
     p.sections[def.key].bars = p.sections[def.key].bars.map(b => ({ text: (b?.text ?? "") }));
-    p.sections[def.key].title = def.title;
-    p.sections[def.key].titleEditable = false;
+
+    // Do NOT auto-fill base titles (keep pills blank unless user types).
+    if(p.sections[def.key].title == null) p.sections[def.key].title = "";
+    if(typeof p.sections[def.key].titleEditable !== "boolean") p.sections[def.key].titleEditable = true;
   }
 
   // ✅ ensure extras listed exist as sections
@@ -847,6 +961,16 @@ function touchProject(p){
   p.updatedAt = nowISO();
   saveStoreSafe();
 }
+
+// ✅ alias used by some UI actions (keeps older call sites safe)
+function saveProject(p){
+  try{ touchProject(p); }catch(e){}
+}
+
+// ✅ Ensure legacy/global call sites never throw a ReferenceError
+// (some shared builds still call saveProject from inline handlers).
+try{ window.saveProject = saveProject; }catch(_e){}
+
 
 /***********************
 ✅ migrate old audio (dataUrl -> idb)
@@ -898,6 +1022,114 @@ let recordLimiter = null;  // ✅ prevents recording breakup
 
 let metroTimer = null;
 let metroBeat16 = 0;
+let autoScrollMetroOffset16 = 0;
+
+// ✅ practice-mode autoscroll (no audio, no drums)
+// When Scroll is enabled with no playback + no metronome, we still advance beats visually at BPM.
+let practiceScrollOn = false;
+let practiceScrollTimer = null;
+let practiceBeat16 = 0;
+let practiceStartBarIdx = 0;
+
+function stopPracticeScroll(){
+  practiceScrollOn = false;
+  if(practiceScrollTimer){
+    clearInterval(practiceScrollTimer);
+    practiceScrollTimer = null;
+  }
+  practiceBeat16 = 0;
+}
+
+function getFirstVisibleBarIdxInActivePage(){
+  // ✅ Choose the bar/card with the MOST visible area in the current viewport.
+  // This prevents "jumping back one" when the previous card is barely still visible.
+  try{
+    const p = (typeof getActiveProject === "function") ? getActiveProject() : null;
+    const key = getVisibleRealPageKeyFromPager(p) || (p && p.activeSection) || "full";
+    const pageEl = (typeof getActiveRealPageEl === "function") ? getActiveRealPageEl(key) : null;
+    if(!pageEl) return 0;
+
+    const scroller = (typeof findVerticalScroller === "function")
+      ? (findVerticalScroller(pageEl) || document.scrollingElement)
+      : document.scrollingElement;
+
+    const bars = Array.from(pageEl.querySelectorAll('.bar[data-bar-idx], .barCard[data-bar-idx]'));
+    if(!bars.length) return 0;
+
+    const isInner = (scroller && scroller !== document.body && scroller !== document.documentElement && scroller !== document.scrollingElement);
+    const vr = isInner ? scroller.getBoundingClientRect() : { top: 0, bottom: window.innerHeight };
+    const viewTop = vr.top;
+    const viewBottom = vr.bottom;
+
+    let bestIdx = 0;
+    let bestVisible = -1;
+    let bestTopDist = Infinity;
+
+    for(const el of bars){
+      const r = el.getBoundingClientRect();
+
+      // intersection height with viewport
+      const visible = Math.max(0, Math.min(r.bottom, viewBottom) - Math.max(r.top, viewTop));
+      if(visible <= 0) continue;
+
+      const topDist = Math.abs(r.top - viewTop);
+
+      // prefer most visible; tie-breaker: closer to top
+      if(visible > bestVisible + 0.5 || (Math.abs(visible - bestVisible) <= 0.5 && topDist < bestTopDist)){
+        const v = parseInt(el.getAttribute("data-bar-idx") || el.dataset.barIdx || "0", 10);
+        bestIdx = Number.isFinite(v) ? v : 0;
+        bestVisible = visible;
+        bestTopDist = topDist;
+      }
+    }
+    return bestVisible >= 0 ? bestIdx : 0;
+  }catch(_e){
+    return 0;
+  }
+}
+
+function startPracticeScroll(p){
+  stopPracticeScroll();
+  practiceScrollOn = true;
+  practiceBeat16 = 0;
+
+  const activeProject = (typeof getActiveProject === "function") ? getActiveProject() : p;
+  if(activeProject){
+    activeProject.playback = activeProject.playback || {};
+    const visibleKey = getVisibleRealPageKeyFromPager(activeProject) || activeProject.activeSection || null;
+    if(visibleKey){
+      activeProject.playback.anchorPageKey = visibleKey;
+      if(activeProject.activeSection !== visibleKey) activeProject.activeSection = visibleKey;
+    }
+    const firstVisibleBarIdx = getFirstVisibleBarIdxInActivePage();
+    activeProject.playback.seqStartOffset = computeSeqStartOffsetFromAnchor(activeProject, activeProject.playback.anchorPageKey, firstVisibleBarIdx);
+  }
+
+  const bpmRaw = (activeProject && typeof activeProject.bpm !== "undefined") ? activeProject.bpm : (els?.bpmInput ? parseFloat(els.bpmInput.value) : 90);
+  const bpm = (Number.isFinite(bpmRaw) && bpmRaw > 0) ? bpmRaw : 90;
+  const msPer16 = (60000 / bpm) / 4;
+
+  // tick at 16th notes and drive the same highlight/scroll routine used by drums/audio
+  practiceScrollTimer = setInterval(() => {
+    if(!practiceScrollOn) return;
+
+    const proj = (typeof getActiveProject === "function") ? getActiveProject() : activeProject;
+    if(!proj) return;
+
+    const pageKey = proj.playback?.anchorPageKey || proj.activeSection || "full";
+
+    const step16 = practiceBeat16 % 16;
+    const beatInBar = Math.floor(step16 / 4);
+    const barIdx = Math.floor(practiceBeat16 / 16); // start at 0 and use seqStartOffset
+
+    syncHighlightAndScroll(pageKey, barIdx, beatInBar, (proj.playback && proj.playback.seqStartOffset) || 0);
+
+    practiceBeat16++;
+  }, msPer16);
+}
+
+ // when Scroll engaged during drums, start visual beat count from 0
+
 
 let activeDrum = 1;
 
@@ -1184,6 +1416,98 @@ function getPlaySequence(p){
   return seq;
 }
 
+function computeAutoScrollStartIdx(p){
+  try{
+    const seq = getPlaySequence(p);
+    if(!seq || !seq.length) return 0;
+    const anchor = (p && p.activeSection) ? p.activeSection : null;
+    if(!anchor) return 0;
+    let i = seq.findIndex(x => x.secKey === anchor && x.barIdx === 0);
+    if(i < 0) i = seq.findIndex(x => x.secKey === anchor);
+    return i < 0 ? 0 : i;
+  }catch(e){
+    return 0;
+  }
+}
+
+// ✅ Determine the real (non-clone) page key currently visible in the horizontal pager.
+// This is more reliable than p.activeSection when the user has scrolled/dragged but state
+// hasn't updated yet.
+function getVisibleRealPageKeyFromPager(p){
+  try{
+    const pagerEl = document.getElementById("pagesPager") || (els?.bars?.querySelector?.(".pager"));
+    if(!pagerEl) return (p && p.activeSection) ? p.activeSection : null;
+
+    const idx = getCurrentIdx(pagerEl);
+    const order = getActivePageOrder(p) || ["full"];
+    const CAROUSEL_ORDER = [order[order.length - 1], ...order, order[0]];
+
+    let key = CAROUSEL_ORDER[idx] || "full";
+    if(idx === 0) key = order[order.length - 1];
+    if(idx === CAROUSEL_ORDER.length - 1) key = order[0];
+    return key || null;
+  }catch(e){
+    return (p && p.activeSection) ? p.activeSection : null;
+  }
+}
+
+// ✅ Convert an (anchor page key + bar idx) to the global play-sequence offset.
+function computeSeqStartOffsetFromAnchor(p, pageKey, barIdx){
+  try{
+    const seq = getPlaySequence(p);
+    if(!seq || !seq.length) return 0;
+    const k = pageKey || (p && p.activeSection) || null;
+    const i = Number.isFinite(+barIdx) ? +barIdx : 0;
+    const off = seq.findIndex(x => (x.secKey === k || x.sectionKey === k) && Number(x.barIdx) === Number(i));
+    return off >= 0 ? off : 0;
+  }catch(e){
+    return 0;
+  }
+}
+
+function computeSeqStartOffsetFromViewport(p){
+  try{
+    const seq = getPlaySequence(p);
+    if(!seq || !seq.length) return 0;
+
+    // Scroller that contains the cards
+    const scroller =
+      (els && (els.cardsScroller || els.barsScroller)) ||
+      document.getElementById('cardsScroller') ||
+      document.getElementById('barsScroller') ||
+      document.scrollingElement;
+
+    const pageKey = (p && p.playback && p.playback.anchorPageKey) ? p.playback.anchorPageKey : (p && p.activeSection ? p.activeSection : null);
+    if(!scroller || !pageKey) return 0;
+
+    const esc = (window.CSS && CSS.escape) ? CSS.escape : (s)=>String(s).replace(/[^a-zA-Z0-9_\-]/g,'\\$&');
+    const pageEl =
+      document.querySelector(`.page[data-page-key="${esc(pageKey)}"]`) ||
+      document.querySelector(`.page[data-sec-key="${esc(pageKey)}"]`);
+    if(!pageEl) return 0;
+
+    const scRect = scroller.getBoundingClientRect();
+    const bars = Array.from(pageEl.querySelectorAll('.barCard, .bar, [data-bar-idx]'));
+    if(!bars.length) return 0;
+
+    let first = null;
+    for(const b of bars){
+      const r = b.getBoundingClientRect();
+      if(r.bottom > scRect.top + 8){
+        first = b; break;
+      }
+    }
+    const barIdx = first ? parseInt(first.getAttribute('data-bar-idx') || (first.dataset ? first.dataset.barIdx : '0') || '0', 10) : 0;
+
+    const off = seq.findIndex(x => (x.secKey === pageKey || x.sectionKey === pageKey) && Number(x.barIdx) === Number(barIdx));
+    return off >= 0 ? off : 0;
+  }catch(e){
+    return 0;
+  }
+}
+
+
+
 function gotoSectionKey(p, secKey, behavior="auto"){
   if(!p || !secKey) return;
   const order = getActivePageOrder(p);
@@ -1206,7 +1530,7 @@ function gotoSectionKey(p, secKey, behavior="auto"){
 /*************
 ✅ highlight driver (now supports global text sequence)
 *************/
-function syncHighlightAndScroll(pageKey, globalBarIdx, beatInBar){
+function syncHighlightAndScroll(pageKey, globalBarIdx, beatInBar, seqOffset=0){
   const p = getActiveProject();
   if(!p) return;
 
@@ -1260,7 +1584,8 @@ function syncHighlightAndScroll(pageKey, globalBarIdx, beatInBar){
     return;
   }
 
-  const idx = ((globalBarIdx % seq.length) + seq.length) % seq.length;
+  const base = (Number.isFinite(+seqOffset) ? (+seqOffset) : 0);
+  const idx = (((base + globalBarIdx) % seq.length) + seq.length) % seq.length;
   const target = seq[idx];
   if(!target) return;
 
@@ -1307,6 +1632,7 @@ function startMetronome(){
   stopMetronome();
 
   metroOn = true;
+  stopPracticeScroll();
   metroBeat16 = 0;
   startEyePulseFromBpm();
   updateDrumButtonsUI();
@@ -1315,11 +1641,18 @@ function startMetronome(){
     const bpm = getProjectBpm();
     const intervalMs = 60000 / bpm / 4;
 
-    const step16 = metroBeat16 % 16;
-    const beatInBar = Math.floor(step16 / 4);
+    const step16 = metroBeat16 % 16; // absolute 16th within bar (drums)
+    let beatInBar = Math.floor(step16 / 4);
+    let barIdx = Math.floor(Math.floor(metroBeat16 / 4) / 4);
 
-    const beatCount = Math.floor(metroBeat16 / 4);
-    const barIdx = Math.floor(beatCount / 4);
+    // If auto-scroll was engaged while drums are already running, we "re-zero" the visual
+    // beat counter so Beat 1 starts when Scroll is pressed (no jumping ahead).
+    if(autoScrollOn){
+      const rel16 = metroBeat16 - (typeof autoScrollMetroOffset16 === 'number' ? autoScrollMetroOffset16 : 0);
+      const step16Rel = ((rel16 % 16) + 16) % 16;
+      beatInBar = Math.floor(step16Rel / 4);
+      barIdx = Math.floor(Math.floor(rel16 / 4) / 4);
+    }
 
     // play drums
     if(activeDrum === 1){
@@ -1352,8 +1685,8 @@ function startMetronome(){
     }
 
     const p = getActiveProject();
-    const pageKey = p?.activeSection || "full";
-    syncHighlightAndScroll(pageKey, barIdx, beatInBar);
+    const pageKey = playback.anchorPageKey || p?.activeSection || "full";
+    syncHighlightAndScroll(pageKey, barIdx, beatInBar, (p && p.playback && p.playback.seqStartOffset) || 0);
 
     metroBeat16++;
     metroTimer = setTimeout(tick, intervalMs);
@@ -1411,6 +1744,8 @@ function ensurePlayerNode(){
 
 const playback = {
   isPlaying: false,
+  beatOffsetBeats: 0,
+  anchorPageKey: null,
   recId: null,
 
   raf: null,
@@ -1420,6 +1755,8 @@ const playback = {
     this.raf = null;
 
     this.isPlaying = false;
+    this.beatOffsetBeats = 0;
+    playback.anchorPageKey = null;
 
     // stop audio element cleanly
     try{
@@ -1463,13 +1800,14 @@ const playback = {
       const t = Math.max(0, playerEl.currentTime || 0);
 
       const bpm = getProjectBpm();
-      const beatPos = (t * bpm) / 60;
+      let beatPos = (t * bpm) / 60 - (this.beatOffsetBeats||0);
+      if(beatPos < 0) beatPos = 0;
       const beatInBar = Math.floor(beatPos) % 4;
       const barIdx = Math.floor(beatPos / 4);
 
       const p = getActiveProject();
-      const pageKey = p?.activeSection || "full";
-      syncHighlightAndScroll(pageKey, barIdx, beatInBar);
+      const pageKey = playback.anchorPageKey || p?.activeSection || "full";
+      syncHighlightAndScroll(pageKey, barIdx, beatInBar, (p && p.playback && p.playback.seqStartOffset) || 0);
 
       this.raf = requestAnimationFrame(loop);
     };
@@ -1519,6 +1857,13 @@ const playback = {
     }
 
     this.isPlaying = true;
+    if(autoScrollOn){
+      this.beatOffsetBeats = 0;
+      playback.anchorPageKey = (getActiveProject && getActiveProject())?.activeSection || null;
+    } else {
+      this.beatOffsetBeats = 0;
+      playback.anchorPageKey = null;
+    }
     startEyePulseFromBpm();
     this._startSyncLoop();
     renderRecordings();
@@ -1921,8 +2266,15 @@ function applyFullTextToProject(p, fullText){
     }
   }
   // ✅ if user typed under a deleted heading, re-enable that page
-  ensurePagesForText(p);
-  touchProject(p);
+        const _prevKeys = JSON.stringify(p.pageKeysActive||[]);
+        ensurePagesForText(p);
+        const _afterKeys = JSON.stringify(p.pageKeysActive||[]);
+        if (_prevKeys !== _afterKeys){
+          saveProject(p);
+          requestAnimationFrame(()=>renderBars({preserveScroll:true, targetPageKey:"full", snapBehavior:"auto"}));
+          return;
+        }
+touchProject(p);
 }
 function syncSectionCardsFromProject(p){
   const areas = document.querySelectorAll('textarea[data-sec][data-idx]');
@@ -1956,6 +2308,68 @@ function syncSectionCardsFromProject(p){
   });
 }
 
+
+function updateRhymesFromSectionCaret(p, key, ta){
+  try{
+    if(!ta) return;
+
+    const hs = buildHeadingSet(p);
+
+    const isChordLine = (line) => {
+      const t = (line||"").trim();
+      if(!t) return true;
+      if(/^[-_]{3,}$/.test(t)) return true;
+
+      const cleaned = t.replace(/[\[\]\(\)\{\}]/g,"").trim();
+      const toks = cleaned.split(/\s+/).filter(Boolean);
+      if(!toks.length) return true;
+
+      const chordRe = /^(\d+)?[A-G](?:#|b)?(?:m|maj|min|dim|aug|sus|add)?\d*(?:\/[A-G](?:#|b)?)?$/i;
+      let chordish = 0;
+      for(const tok of toks){
+        if(tok === "|" || tok === "/"){ chordish++; continue; }
+        if(chordRe.test(tok)){ chordish++; continue; }
+      }
+      return chordish === toks.length && toks.length >= 2;
+    };
+
+    const pickPrevLyricLine = (text) => {
+      const lines = (text||"").replace(/\r/g,"").split("\n");
+      for(let i=lines.length-1; i>=0; i--){
+        const raw = lines[i] ?? "";
+        const t = raw.trim();
+        if(!t) continue;
+        const up = t.toUpperCase();
+        if(hs.has(up)) continue;
+        if(isChordLine(t)) continue;
+        return t;
+      }
+      return "";
+    };
+
+    const textNow = ta.value || "";
+    const caret = ta.selectionStart || 0;
+    const before = textNow.slice(0, caret);
+
+    let baseLine = pickPrevLyricLine(before);
+
+    if(!baseLine){
+      const order = getActivePageOrder(p).filter(k=>k!=="full");
+      const idx = order.indexOf(key);
+      for(let i=idx-1; i>=0; i--){
+        const k2 = order[i];
+        const t2 = sectionTextFromProject(p, k2);
+        const picked = pickPrevLyricLine(t2);
+        if(picked){ baseLine = picked; break; }
+      }
+    }
+
+    updateRhymes(lastWord(baseLine));
+  }catch(err){
+    // fail silently; never block typing
+  }
+}
+
 function updateRhymesFromFullCaret(fullTa){
   if(!fullTa) return;
   const text = fullTa.value || "";
@@ -1985,6 +2399,137 @@ function getCarouselOrder(p){
   return [order[order.length - 1], ...order, order[0]];
 }
 
+
+// ---------- FULL SONG VIEW (SRP-style flow) ----------
+function getActiveSectionKeysForFullView(p){
+  // all active pages except "full"
+  const order = getActivePageOrder(p) || ["full"];
+  return order.filter(k => k !== "full");
+}
+
+function sectionTextFromProject(p, key){
+  const sec = p?.sections?.[key];
+  const bars = (sec?.bars || []);
+  // join bars with a blank line between, but trim trailing whitespace
+  return bars.map(b => (b?.text ?? "")).join("\n\n").replace(/\s+$/g, "");
+}
+
+function setSectionBarsFromText(p, key, rawText){
+  const sec = p.sections[key] || (p.sections[key] = { key, title:"", bars:[{text:""}], titleEditable:true });
+  const t = String(rawText || "").replace(/\r\n/g, "\n");
+  const lines = t.split("\n");
+  // collapse into "bar blocks" separated by blank lines
+  const blocks = [];
+  let buf = [];
+  for(const ln of lines){
+    if(String(ln).trim() === ""){
+      if(buf.length){
+        blocks.push(buf.join("\n").replace(/\s+$/g,""));
+        buf = [];
+      }
+    }else{
+      buf.push(ln.replace(/\s+$/g,""));
+    }
+  }
+  if(buf.length) blocks.push(buf.join("\n").replace(/\s+$/g,""));
+
+  sec.bars = (blocks.length ? blocks : [""]).map(txt => ({ text: txt }));
+}
+
+function renderFullSongFlow(p, mount){
+  mount.innerHTML = "";
+  mount.className = "fullSongFlow";
+
+  const keys = getActiveSectionKeysForFullView(p);
+
+  // safety: if somehow no pages exist, create the first base page
+  if(!keys.length){
+    const first = BASE_ORDER[0] || "verse1";
+    if(!p.pageKeysActive.includes(first)) p.pageKeysActive.push(first);
+    keys.push(first);
+  }
+
+  for(const key of keys){
+    const sec = p.sections[key] || (p.sections[key] = { key, title:"", bars:[{text:""}], titleEditable:true });
+    const block = document.createElement("div");
+    block.className = "fullSection";
+    block.dataset.secKey = key;
+
+    const hdr = document.createElement("div");
+    hdr.className = "fullSectionHeader";
+    hdr.innerHTML = `
+      <div class="line"></div>
+      <input class="sectionPill" data-sec-title="${escAttr(key)}" type="text" spellcheck="false" />
+      <div class="line"></div>
+    `;
+
+    const pill = hdr.querySelector(".sectionPill");
+    pill.value = (sec.title || "").trim();
+    pill.placeholder = "Song Part";
+
+    // editable title for base + extras (SRP behavior)
+    pill.addEventListener("input", ()=>{
+      sec.title = pill.value;
+      touchProject(p);
+      // ✅ sync this title everywhere (card page title pills + any other full pills)
+      document.querySelectorAll(`input[data-sec-title="${key}"]`).forEach(inp=>{
+        if(inp !== pill) inp.value = pill.value;
+      });
+    });
+
+    const body = document.createElement("textarea");
+    body.className = "fullSectionBody fullSectionEditor";
+    body.spellcheck = false;
+    body.rows = 1;
+    body.dataset.secEditor = key;
+    body.value = sectionTextFromProject(p, key);
+    requestAnimationFrame(()=>autoGrowTextarea(body));
+    body.addEventListener("input", ()=>{ autoGrowTextarea(body); });
+
+    // commit edits (debounced) -> update section bars and cards
+    let tmr = null;
+    const commit = ()=>{
+      clearTimeout(tmr);
+      tmr = setTimeout(()=>{
+        setSectionBarsFromText(p, key, body.value || "");
+        syncSectionCardsFromProject(p);
+        touchProject(p);
+      }, 180);
+    };
+    body.addEventListener("input", commit);
+    body.addEventListener("blur", commit);
+
+        const btnRow = document.createElement("div");
+    btnRow.className = "fullSectionBtnRow";
+    const addBtn = document.createElement("button");
+    addBtn.className = "smallBtn fullAddBtn";
+    addBtn.type = "button";
+    addBtn.textContent = "+";
+    addBtn.addEventListener("click", (e)=>{
+      e.preventDefault(); e.stopPropagation();
+      // ✅ add the next PAGE (section) like SRP (not an extra text window)
+      addNextPage(p, key, { preserveScroll:true, stayOnFull:true });
+    });
+
+    const delBtn = document.createElement("button");
+    delBtn.className = "smallBtn fullDelBtn";
+    delBtn.type = "button";
+    delBtn.textContent = "×";
+    delBtn.addEventListener("click", (e)=>{
+      e.preventDefault(); e.stopPropagation();
+      // ✅ delete THIS page (section)
+      deletePageKey(p, key, { preserveScroll:true, stayOnFull:true });
+    });
+
+    btnRow.appendChild(addBtn);
+    btnRow.appendChild(delBtn);
+    block.appendChild(hdr);
+    block.appendChild(body);
+    block.appendChild(btnRow);
+    mount.appendChild(block);
+  }
+}
+
 function buildPager(p){
   const pager = document.createElement("div");
   pager.className = "pager";
@@ -2005,9 +2550,29 @@ function buildPager(p){
     const titleRow = document.createElement("div");
     titleRow.className = "pageTitleRow";
 
-    const titleTxt = document.createElement("div");
-    titleTxt.className = "pageTitle";
-    titleTxt.textContent = getHeadingTextForKey(p, key);
+    let titleTxt;
+    if(key === "full"){
+      titleTxt = document.createElement("div");
+      titleTxt.className = "pageTitle";
+      titleTxt.textContent = "Full Song View";
+    } else {
+      const sec = p.sections[key] || (p.sections[key] = { key, title:"", bars:[{text:""}], titleEditable:true });
+      titleTxt = document.createElement("input");
+      titleTxt.type = "text";
+      titleTxt.spellcheck = false;
+      titleTxt.className = "pageTitlePill sectionPill";
+      titleTxt.placeholder = "Song Part";
+      titleTxt.value = (sec.title || "").trim();
+      titleTxt.setAttribute("data-sec-title", key);
+      titleTxt.addEventListener("input", ()=>{
+        sec.title = titleTxt.value;
+        touchProject(p);
+        // sync to Full Song View pill(s)
+        document.querySelectorAll(`input.sectionPill[data-sec-title="${key}"]`).forEach(inp=>{
+          if(inp !== titleTxt) inp.value = titleTxt.value;
+        });
+      });
+    }
 
     const btns = document.createElement("div");
     btns.className = "pageTitleBtns";
@@ -2036,52 +2601,23 @@ function buildPager(p){
     page.appendChild(titleRow);
 
     if(key === "full"){
-      const box = document.createElement("div");
-      box.className = "fullBox";
-      box.innerHTML = `
-        <div class="fullSub">
-          Paste + edit. Rhymes follow the last word on the line above your cursor. Use "/" for manual beat breaks.
-        </div>
-        <textarea class="fullEditor" spellcheck="false"></textarea>
-      `;
-      page.appendChild(box);
-      pager.appendChild(page);
-      return;
-    }
+  // SRP-style continuous Full Song View (no inner scrolling window)
+  const mount = document.createElement("div");
+  mount.className = "fullSongMount fullSongFlow";
+  page.appendChild(mount);
+
+  renderFullSongFlow(p, mount);
+
+  pager.appendChild(page);
+  return;
+}
 
     const mount = document.createElement("div");
+    mount.className = "sectionMount";
+    mount.dataset.secMount = key;
     mount.style.display = "flex";
     mount.style.flexDirection = "column";
     mount.style.gap = "10px";
-
-    // ✅ extra title editor (blank editable title)
-    if(isExtraKey(key)){
-      const sec = p.sections[key] || (p.sections[key] = { key, title:"", bars:[{text:""}], titleEditable:true });
-      const titleInput = document.createElement("input");
-      titleInput.type = "text";
-      titleInput.placeholder = "Title…";
-      titleInput.value = (sec.title || "");
-      titleInput.className = "wideInput";
-      titleInput.className = "wideInput";
-      // ✅ DO NOT re-render on every keystroke (mobile keyboard will collapse)
-      titleInput.addEventListener("input", ()=>{
-        sec.title = String(titleInput.value || "");
-        touchProject(p);
-      });
-      // ✅ Commit + rebuild only when user is done editing the title
-      titleInput.addEventListener("blur", ()=>{
-        sec.title = String(titleInput.value || "");
-        touchProject(p);
-        renderBars();
-      });
-      titleInput.addEventListener("keydown", (e)=>{
-        if(e.key === "Enter"){
-          e.preventDefault();
-          titleInput.blur();
-        }
-      });
-      mount.appendChild(titleInput);
-    }
 
     renderSectionBarsInto(p, key, mount);
     page.appendChild(mount);
@@ -2105,6 +2641,23 @@ function snapToIdx(pagerEl, idx, behavior="auto"){
   idx = Math.max(0, Math.min((pagerEl.children.length - 1), idx));
   pagerEl.scrollTo({ left: idx * w, behavior });
 }
+function snapToPageKey(p, pageKey, opts={}){
+  try{
+    const pagerEl = els?.bars?.querySelector?.(".pager");
+    if(!pagerEl) return;
+
+    const pages = Array.from(pagerEl.children || []);
+    const idx = pages.findIndex(el => (el && el.dataset && (el.dataset.pageKey === pageKey)));
+    if(idx < 0) return;
+
+    const behavior = opts && opts.smooth ? "smooth" : "auto";
+    snapToIdx(pagerEl, idx, behavior);
+    setActiveSectionFromIdx(p, idx);
+  }catch(err){
+    console.warn("snapToPageKey failed", err);
+  }
+}
+
 
 function setActiveSectionFromIdx(p, idx){
   const order = getActivePageOrder(p);
@@ -2201,7 +2754,7 @@ function createNextExtra(p){
   return key;
 }
 
-function addNextPage(p, fromKey){
+function addNextPage(p, fromKey, opts={}){
   const next = nextAddKeyFrom(p, fromKey);
 
   let key = next;
@@ -2212,24 +2765,24 @@ function addNextPage(p, fromKey){
   // add to active pages
   if(!p.pageKeysActive.includes(key)) p.pageKeysActive.push(key);
 
-  // switch to it
-  p.activeSection = key;
+  // switch to it (unless we are adding from Full Song View)
+  if(!(opts && opts.stayOnFull)){
+    p.activeSection = key;
+  }else{
+    p.activeSection = "full";
+  }
   touchProject(p);
-  renderBars();
-
-  // snap after render
-  requestAnimationFrame(()=>{
-    const pager = document.getElementById("pagesPager");
-    if(!pager) return;
-    const order = getActivePageOrder(p);
-    const idx = order.indexOf(key);
-    if(idx >= 0) snapToIdx(pager, idx + 1, "smooth"); // +1 because carousel clone
+  // Render and snap exactly once to the newly-added page (prevents "bounce"/back-scroll).
+  renderBars({
+    preserveScroll: !!opts.preserveScroll,
+    targetPageKey: (opts && opts.stayOnFull) ? (p.activeSection || "full") : key,
+    snapBehavior: "auto"
   });
 
   showToast("Added page");
 }
 
-function deletePageKey(p, key){
+function deletePageKey(p, key, opts={}){
   if(!key || key === "full") return;
 
   // mark deleted + remove from active
@@ -2240,12 +2793,17 @@ function deletePageKey(p, key){
   if(p.activeSection === key) p.activeSection = "full";
 
   touchProject(p);
-  renderBars();
+  renderBars({preserveScroll: !!opts.preserveScroll});
+  if(opts && opts.stayOnFull){
+    const p2 = getActiveProject();
+    p2.activeSection = "full";
+    touchProject(p2);
+  }
   showToast("Deleted page");
 }
 function shouldIgnoreSwipeStart(target){
   if(!target) return false;
-  return !!target.closest("input, textarea, select, button, .rhymeDock, .iconBtn, .projIconBtn");
+  return !!target.closest("button, .rhymeDock, .iconBtn, .projIconBtn, [data-noswipe], .noSwipe");
 }
 
 function setupCarouselPager(pagerEl, p){
@@ -2361,6 +2919,9 @@ function setupCarouselPager(pagerEl, p){
 function renderSectionBarsInto(p, sectionKey, mountEl){
   const sec = p.sections[sectionKey];
   if(!sec?.bars) return;
+
+  // Rebuild list cleanly (needed when bar count changes from Full Song View)
+  mountEl.innerHTML = "";
 
   sec.bars.forEach((bar, idx)=>{
     const wrap = document.createElement("div");
@@ -2556,47 +3117,102 @@ document.addEventListener("click", (e)=>{
 /***********************
 ✅ renderBars
 ***********************/
-function renderBars(){
+function renderBars(opts={}){
   const p = getActiveProject();
   if(!els.bars) return;
+
+  const preserveScroll = !!(opts && opts.preserveScroll);
+  const prevScrollTop = preserveScroll ? els.bars.scrollTop : 0;
 
   els.bars.innerHTML = "";
   const pager = buildPager(p);
   els.bars.appendChild(pager);
 
-  lastAutoScrollToken = null;
-
-  // FULL editor
-  const fullTa = els.bars.querySelector(".fullEditor");
-  if(fullTa){
-    fullTa.value = buildFullTextFromProject(p);
-    autoGrowTextarea(fullTa);
-
-    let tmr = null;
-    const commit = () => {
-      applyFullTextToProject(p, fullTa.value || "");
-      syncSectionCardsFromProject(p);
-      playSeqCache.updatedAt = null;
-    };
-
-    const refresh = () => { updateRhymesFromFullCaret(fullTa); updateDockForKeyboard(); };
-    refresh();
-
-    fullTa.addEventListener("input", ()=>{
-      autoGrowTextarea(fullTa);
-      if(tmr) clearTimeout(tmr);
-      tmr = setTimeout(commit, 220);
-      refresh();
-    });
-    fullTa.addEventListener("click", refresh);
-    fullTa.addEventListener("keyup", refresh);
-    fullTa.addEventListener("focus", ()=>{ autoGrowTextarea(fullTa); refresh(); });
+  if(preserveScroll){
+    requestAnimationFrame(()=>{ try{ els.bars.scrollTop = prevScrollTop; }catch(e){} });
   }
 
-    const order = getActivePageOrder(p);
-  const realIdx = Math.max(0, order.indexOf(p.activeSection || "full"));
-  snapToIdx(pager, realIdx + 1, "auto");
+  lastAutoScrollToken = null;
+
+  
+// FULL song view (SRP-style flow)
+const fullMount = els.bars.querySelector(".fullSongMount");
+if(fullMount){
+  // keep UI in sync with current project state
+  renderFullSongFlow(p, fullMount);
+
+  const editors = fullMount.querySelectorAll(".fullSectionEditor");
+  const timers = new Map();
+
+  const commitSection = (key, ta) => {
+    const prevLen = (p.sections[key]?.bars || []).length;
+
+    setSectionBarsFromText(p, key, ta.value || "");
+    const _prevKeys = JSON.stringify(p.pageKeysActive||[]);
+    ensurePagesForText(p);
+    const _afterKeys = JSON.stringify(p.pageKeysActive||[]);
+    if (_prevKeys !== _afterKeys){
+      touchProject(p);
+      saveProject(p);
+      requestAnimationFrame(()=>renderBars({preserveScroll:true, targetPageKey:"full", snapBehavior:"auto"}));
+      return;
+    }
+touchProject(p);
+
+    // Update any already-rendered card inputs
+    syncSectionCardsFromProject(p);
+
+    const newLen = (p.sections[key]?.bars || []).length;
+
+    // If the bar count changed (e.g., pasted 16 bars), rebuild that card page immediately
+    if(newLen !== prevLen){
+      const pageEl = document.querySelector(`.page[data-page-key="${key}"]`);
+      
+    if (!pageEl){
+      touchProject(p);
+      saveProject(p);
+      requestAnimationFrame(()=>renderBars({preserveScroll:true, targetPageKey:"full", snapBehavior:"auto"}));
+      return;
+    }
+const mountEl = pageEl ? pageEl.querySelector(".sectionMount") : null;
+      if(mountEl){
+        renderSectionBarsInto(p, key, mountEl);
+      }
+    }
+
+    playSeqCache.updatedAt = null;
+  };
+
+  const refreshRhymes = (key, ta) => {
+    updateRhymesFromSectionCaret(p, key, ta);
+    updateDockForKeyboard();
+  };
+
+  editors.forEach((ta)=>{
+    const key = ta.dataset.secEditor;
+    autoGrowTextarea(ta);
+
+    let tmr = null;
+    ta.addEventListener("input", ()=>{
+      autoGrowTextarea(ta);
+      if(tmr) clearTimeout(tmr);
+      tmr = setTimeout(()=> commitSection(key, ta), 220);
+      refreshRhymes(key, ta);
+    });
+    ta.addEventListener("click", ()=> refreshRhymes(key, ta));
+    ta.addEventListener("keyup", ()=> refreshRhymes(key, ta));
+    ta.addEventListener("focus", ()=>{ autoGrowTextarea(ta); refreshRhymes(key, ta); });
+  });
+}
+
+  const order = getActivePageOrder(p);
+  const wantKey = (opts && opts.targetPageKey) ? opts.targetPageKey : (p.activeSection || "full");
+  const wantIdx = Math.max(0, order.indexOf(wantKey));
+  const behavior = (opts && opts.snapBehavior) ? opts.snapBehavior : "auto";
+
+  // Important: only snap once after render (prevents "scroll backwards then forward" glitches)
   setupCarouselPager(pager, p);
+  snapToIdx(pager, wantIdx + 1, behavior);
 }
 
 /***********************
@@ -2777,7 +3393,10 @@ function renderAll(){
   const p = getActiveProject();
   document.body.classList.toggle("fullMode", p.activeSection === "full");
 
-  if(els.bpm) els.bpm.value = p.bpm || 95;
+  
+  relocateMiniCard();
+  syncHeaderHeightVar();
+if(els.bpm) els.bpm.value = p.bpm || 95;
 
   renderProjectPicker();
   renderBars();
@@ -3010,18 +3629,80 @@ els.mp3Input?.addEventListener("change", async (e)=>{
   }
 });
 
+
+/***********************
+✅ pull-to-refresh (firm pull)
+***********************/
+function attachPullToRefresh(scrollEl, onRefresh){
+  if(!scrollEl || scrollEl.__ptrAttached) return;
+  scrollEl.__ptrAttached = true;
+
+  let startY = 0;
+  let startX = 0;
+  let tracking = false;
+  let pulled = false;
+
+  const THRESH = 110; // px - "firm pull"
+  const MAX_X = 60;   // ignore diagonal/horizontal drags
+
+  const isTypingEl = (el)=>{
+    if(!el) return false;
+    const tag = (el.tagName || "").toLowerCase();
+    if(tag === "textarea" || tag === "input") return true;
+    if(el.isContentEditable) return true;
+    return false;
+  };
+
+  scrollEl.addEventListener("touchstart", (e)=>{
+    if(isTypingEl(e.target)) return;
+    if(scrollEl.scrollTop > 0) return;
+    const t = e.touches && e.touches[0];
+    if(!t) return;
+    tracking = true;
+    pulled = false;
+    startY = t.clientY;
+    startX = t.clientX;
+  }, { passive:true });
+
+  scrollEl.addEventListener("touchmove", (e)=>{
+    if(!tracking) return;
+    const t = e.touches && e.touches[0];
+    if(!t) return;
+
+    const dy = t.clientY - startY;
+    const dx = Math.abs(t.clientX - startX);
+
+    if(dx > MAX_X) { tracking = false; return; }
+    if(dy > THRESH){
+      pulled = true;
+    }
+  }, { passive:true });
+
+  scrollEl.addEventListener("touchend", ()=>{
+    if(tracking && pulled){
+      try{ showToast("Refreshing…"); }catch(_){}
+      setTimeout(()=>{ try{ onRefresh && onRefresh(); }catch(_){ location.reload(); } }, 30);
+    }
+    tracking = false;
+    pulled = false;
+  }, { passive:true });
+}
+
+
 /***********************
 ✅ boot
 ***********************/
 (async function boot(){
   setDockHidden(loadDockHidden());
   document.body.classList.toggle("headerCollapsed", loadHeaderCollapsed());
+  relocateMiniCard();
   autoScrollOn = loadAutoScroll();
   updateAutoScrollBtn();
 
   // First paint
   renderAll();
   syncHeaderHeightVar();
+  attachPullToRefresh(els.bars, ()=>location.reload());
 
   // Fonts can change header size (spray font), re-measure when ready
   try{
