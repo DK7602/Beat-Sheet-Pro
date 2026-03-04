@@ -194,7 +194,8 @@ function getFullOrder(p){
 function buildHeadingSet(p){
   const set = new Set();
   for(const k of getFullOrder(p)){
-    set.add(getHeadingTextForKey(p, k));
+    const h = (getHeadingTextForKey(p, k) || "").trim().toUpperCase();
+    if(h) set.add(h);
   }
   return set;
 }
@@ -262,10 +263,23 @@ function saveAutoScroll(v){
 }
 function updateAutoScrollBtn(){
   if(!els.autoScrollBtn) return;
+  try{ document.body.classList.toggle("autoScrollOn", !!autoScrollOn); }catch(_e){}
   els.autoScrollBtn.classList.toggle("on", !!autoScrollOn);
   els.autoScrollBtn.textContent = "Scroll";
   els.autoScrollBtn.title = autoScrollOn ? "Auto Scroll: ON" : "Auto Scroll: OFF";
 }
+
+function restoreFullEditorsHeights(){
+  try{
+    const fullPage = document.querySelector(`.page[data-page-key="full"]:not([data-clone="1"])`);
+    if(!fullPage) return;
+    const editors = fullPage.querySelectorAll("textarea.fullSectionEditor");
+    editors.forEach(ta=>{
+      try{ autoGrowTextarea(ta); }catch(_e){}
+    });
+  }catch(_e){}
+}
+
 function setAutoScroll(v){
   const turningOn = !!v && !autoScrollOn;
   autoScrollOn = !!v;
@@ -295,6 +309,10 @@ function setAutoScroll(v){
     }
     autoScrollMetroOffset16 = 0;
 
+    // ✅ When leaving performance mode, re-expand Full Song textareas.
+    // (They were display:none during auto scroll, which can cause height to collapse.)
+    requestAnimationFrame(restoreFullEditorsHeights);
+
     // Persist toggle state without assuming saveProject exists in global scope
     if(p){
       try{ touchProject(p); }catch(e){}
@@ -313,8 +331,17 @@ function setAutoScroll(v){
       if(visibleKey && p.activeSection !== visibleKey){
         p.activeSection = visibleKey;
       }
-      const firstVisibleBarIdx = getFirstVisibleBarIdxInActivePage();
-      p.playback.seqStartOffset = computeSeqStartOffsetFromAnchor(p, visibleKey, firstVisibleBarIdx);
+      let firstVisibleBarIdx = getFirstVisibleBarIdxInActivePage();
+      if(visibleKey === "full"){
+        const t = getFirstVisibleFullPerfTarget();
+        if(t && t.secKey){
+          p.playback.seqStartOffset = computeSeqStartOffsetFromAnchor(p, t.secKey, t.barIdx);
+        }else{
+          p.playback.seqStartOffset = 0;
+        }
+      }else{
+        p.playback.seqStartOffset = computeSeqStartOffsetFromAnchor(p, visibleKey, firstVisibleBarIdx);
+      }
     }
 
     // If user enables auto-scroll while audio is already playing,
@@ -345,6 +372,61 @@ function setAutoScroll(v){
   }
 }
 els.autoScrollBtn?.addEventListener("click", ()=> setAutoScroll(!autoScrollOn));
+/***********************
+✅ Pull-to-refresh fallback (works even when body is overflow:hidden)
+- Pull down at the very top of the main scroller to reload.
+***********************/
+(function setupPullToRefresh(){
+  return; // disabled (superseded by attachPullToRefresh)
+  let startY = 0;
+  let pulling = false;
+  let maxPull = 0;
+
+  function getScroller(){
+    return els.bars || document.getElementById("barsInner") || document.getElementById("bars");
+  }
+
+  function onStart(e){
+    const sc = getScroller();
+    if(!sc) return;
+    if((sc.scrollTop || 0) > 2) return;
+    // don't trigger while interacting with inputs
+    if(e.target && e.target.closest && e.target.closest('textarea,input,select,button,.rhymeDock')) return;
+    const t = e.touches && e.touches[0];
+    if(!t) return;
+    startY = t.clientY;
+    pulling = true;
+    maxPull = 0;
+  }
+
+  function onMove(e){
+    if(!pulling) return;
+    const sc = getScroller();
+    if(!sc) return;
+    if((sc.scrollTop || 0) > 0){ pulling = false; return; }
+    const t = e.touches && e.touches[0];
+    if(!t) return;
+    const dy = t.clientY - startY;
+    if(dy <= 0){ pulling = false; return; }
+    maxPull = Math.max(maxPull, dy);
+    if(dy > 8) e.preventDefault();
+  }
+
+  function onEnd(){
+    if(!pulling) return;
+    pulling = false;
+    if(maxPull > 140){
+      try{ location.reload(); }catch(_e){}
+    }
+  }
+
+  const sc = getScroller();
+  if(!sc) return;
+  sc.addEventListener("touchstart", onStart, { passive:true });
+  sc.addEventListener("touchmove", onMove, { passive:false });
+  sc.addEventListener("touchend", onEnd, { passive:true });
+  sc.addEventListener("touchcancel", onEnd, { passive:true });
+})();
 
 /***********************
 ✅ IndexedDB AUDIO
@@ -519,6 +601,7 @@ function setHeaderCollapsed(isCol){
   saveHeaderCollapsed(!!isCol);
 
   updateDockForKeyboard();
+  syncDockHeightVar();
   if(isCol) stopEyePulse();
   else startEyePulseFromBpm();
 
@@ -532,6 +615,49 @@ els.refreshBtn?.addEventListener("click", ()=>{
   showToast("Refreshing…");
   setTimeout(()=>location.reload(), 150);
 });
+/***********************
+✅ pull-down to refresh (works even with fixed layout)
+***********************/
+(function enablePullToRefresh(){
+  return; // disabled (superseded by attachPullToRefresh)
+  const scroller = document.getElementById("bars");
+  if(!scroller) return;
+
+  let startY = 0;
+  let pulling = false;
+  let maxPull = 0;
+  const THRESH = 80;
+
+  scroller.addEventListener("touchstart", (e)=>{
+    if(e.touches && e.touches.length===1 && scroller.scrollTop <= 0){
+      startY = e.touches[0].clientY;
+      pulling = true;
+      maxPull = 0;
+    }else{
+      pulling = false;
+    }
+  }, {passive:true});
+
+  scroller.addEventListener("touchmove", (e)=>{
+    if(!pulling) return;
+    if(!e.touches || e.touches.length!==1) return;
+    const dy = e.touches[0].clientY - startY;
+    if(dy > 0){
+      maxPull = Math.max(maxPull, dy);
+    }else{
+      pulling = false;
+    }
+  }, {passive:true});
+
+  scroller.addEventListener("touchend", ()=>{
+    if(pulling && maxPull >= THRESH && scroller.scrollTop <= 0){
+      showToast("Refreshing…");
+      setTimeout(()=>location.reload(), 120);
+    }
+    pulling = false;
+    maxPull = 0;
+  }, {passive:true});
+})();
 
 /***********************
 ✅ Keep rhyme dock visible above keyboard (Android)
@@ -548,6 +674,37 @@ window.visualViewport?.addEventListener("scroll", updateDockForKeyboard);
 window.addEventListener("resize", updateDockForKeyboard);
 
 /***********************
+✅ sync rhyme dock height CSS var (removes huge blank space under Full Song View)
+***********************/
+function syncDockHeightVar(){
+  try{
+    const dock = els.rhymeDock;
+
+    let hidden = false;
+    if(!dock) hidden = true;
+
+    // explicit toggle class
+    if(!hidden && dock.classList?.contains("dockHidden")) hidden = true;
+
+    // if CSS hides it, treat as hidden
+    if(!hidden){
+      const cs = getComputedStyle(dock);
+      if(cs.display === "none" || cs.visibility === "hidden") hidden = true;
+    }
+
+    // if it's not in layout (common in some mobile states)
+    if(!hidden && dock.offsetParent === null && dock.getBoundingClientRect().height === 0) hidden = true;
+
+    let h = (hidden) ? 0 : Math.ceil(dock.getBoundingClientRect().height || 0);
+    // ✅ Clamp dock height so long rhyme lists don't create huge padding / dead scroll space
+    h = Math.max(0, Math.min(h, 180));
+    document.documentElement.style.setProperty("--dockH", h + "px");
+  }catch(_e){}
+}
+window.addEventListener("resize", syncDockHeightVar);
+window.visualViewport?.addEventListener("resize", syncDockHeightVar);
+
+/***********************
 ✅ rhyme dock hide/show
 ***********************/
 function loadDockHidden(){
@@ -562,6 +719,7 @@ function setDockHidden(isHidden){
   els.dockToggle.textContent = isHidden ? "R" : "Hide";
   saveDockHidden(!!isHidden);
   updateDockForKeyboard();
+  syncDockHeightVar();
 }
 els.dockToggle?.addEventListener("click", ()=>{
   const nowHidden = els.rhymeDock?.classList?.contains("dockHidden");
@@ -663,7 +821,12 @@ function syllGlowClass(n){
 ***********************/
 function splitBySlashes(text){
   const parts = (text||"").split("/").map(s=>s.trim());
-  return [parts[0]||"", parts[1]||"", parts[2]||"", parts[3]||""];
+  // Allow more than 3 slashes: first 3 segments map to beats 1-3, remainder goes to beat 4
+  const b1 = parts[0] || "";
+  const b2 = parts[1] || "";
+  const b3 = parts[2] || "";
+  const b4 = (parts.length <= 4) ? (parts[3]||"") : parts.slice(3).join(" ").trim();
+  return [b1,b2,b3,b4];
 }
 
 function buildTargets(total){
@@ -725,6 +888,106 @@ function autoSplitSyllablesClean(text){
 function computeBeats(text){
   if((text||"").includes("/")) return splitBySlashes(text);
   return autoSplitSyllablesClean(text);
+}
+
+// For Full Song performance mode: choose a single "lyric" line from a (possibly multi-line) bar.
+// - Skip headings (INTRO, VERSE 1, etc.)
+// - Skip divider lines (---, ___)
+// - Skip chord-only lines
+// - Prefer the last eligible lyric line (closest to where the user is writing)
+function pickPerfLyricLine(p, barText){
+  const hs = buildHeadingSet(p);
+  const lines = String(barText||"").replace(/\r/g,"").split("\n");
+
+  const isChordLine = (line) => {
+    const t = String(line||"").trim();
+    if(!t) return true;
+    if(/^[-_]{3,}$/.test(t)) return true;
+
+    const cleaned = t.replace(/[\[\]\(\)\{\}]/g,"").trim();
+    const toks = cleaned.split(/\s+/).filter(Boolean);
+    if(!toks.length) return true;
+
+    const chordRe = /^(\d+)?[A-G](?:#|b)?(?:m|maj|min|dim|aug|sus|add)?\d*(?:\/[A-G](?:#|b)?)?$/i;
+    let chordish = 0;
+    for(const tok of toks){
+      if(tok === "|" || tok === "/"){ chordish++; continue; }
+      if(chordRe.test(tok)){ chordish++; continue; }
+    }
+    return chordish === toks.length && toks.length >= 1;
+  };
+
+    // ✅ Prefer a user-manually-split lyric line (contains "/") if present.
+  // IMPORTANT: In Full Song View the user often puts the manually-split line FIRST.
+  // So we pick the FIRST eligible line that contains "/" (not the last), otherwise we fall back
+  // to the last eligible lyric line.
+  let lastEligible = "";
+  let firstEligibleWithSlash = "";
+
+  for(let i=0; i<lines.length; i++){
+    const raw = lines[i] ?? "";
+    const t = String(raw).trim();
+    if(!t) continue;
+    const up = t.toUpperCase();
+    if(hs.has(up)) continue;
+    if(isChordLine(t)) continue;
+
+    lastEligible = t;
+    if(!firstEligibleWithSlash && t.includes("/")) firstEligibleWithSlash = t;
+  }
+
+  if(firstEligibleWithSlash) return firstEligibleWithSlash;
+  if(lastEligible) return lastEligible;
+
+  for(const raw of lines){
+    const t = String(raw||"").trim();
+    if(t) return t;
+  }
+  return "";
+}
+
+
+function pickBeatLineFromBar(p, barText){
+  // For card beat boxes: prefer a lyric line with manual "/" splits.
+  // Otherwise fall back to the best lyric line (same rules as Full perf).
+  const raw = String(barText||"");
+  const lines = raw.replace(/\r/g,"").split("\n");
+
+  const hs = buildHeadingSet(p);
+
+  const isChordLine = (line) => {
+    const t = String(line||"").trim();
+    if(!t) return true;
+    if(/^[-_]{3,}$/.test(t)) return true;
+
+    const cleaned = t.replace(/[\[\]\(\)\{\}]/g,"").trim();
+    const toks = cleaned.split(/\s+/).filter(Boolean);
+    if(!toks.length) return true;
+
+    const chordRe = /^(\d+)?[A-G](?:#|b)?(?:m|maj|min|dim|aug|sus|add)?\d*(?:\/[A-G](?:#|b)?)?$/i;
+    let chordish = 0;
+    for(const tok of toks){
+      if(tok === "|" || tok === "/"){ chordish++; continue; }
+      if(chordRe.test(tok)){ chordish++; continue; }
+    }
+    return chordish === toks.length && toks.length >= 1;
+  };
+
+  let lastEligible = "";
+  let firstEligibleWithSlash = "";
+
+  for(const rawLine of lines){
+    const t = String(rawLine||"").trim();
+    if(!t) continue;
+    const up = t.toUpperCase();
+    if(hs.has(up)) continue;
+    if(isChordLine(t)) continue;
+
+    lastEligible = t;
+    if(!firstEligibleWithSlash && t.includes("/")) firstEligibleWithSlash = t;
+  }
+
+  return firstEligibleWithSlash || lastEligible || pickPerfLyricLine(p, raw);
 }
 
 /***********************
@@ -1041,8 +1304,8 @@ function stopPracticeScroll(){
 }
 
 function getFirstVisibleBarIdxInActivePage(){
-  // ✅ Choose the bar/card with the MOST visible area in the current viewport.
-  // This prevents "jumping back one" when the previous card is barely still visible.
+  // ✅ Choose the bar/card that starts at the TOP of the viewport (below sticky header),
+  // not "most visible". This prevents skipping the first line/card of a section.
   try{
     const p = (typeof getActiveProject === "function") ? getActiveProject() : null;
     const key = getVisibleRealPageKeyFromPager(p) || (p && p.activeSection) || "full";
@@ -1058,31 +1321,36 @@ function getFirstVisibleBarIdxInActivePage(){
 
     const isInner = (scroller && scroller !== document.body && scroller !== document.documentElement && scroller !== document.scrollingElement);
     const vr = isInner ? scroller.getBoundingClientRect() : { top: 0, bottom: window.innerHeight };
-    const viewTop = vr.top;
+    let viewTop = vr.top;
     const viewBottom = vr.bottom;
 
+    // account for sticky header inside page (card header row)
+    const sticky = pageEl.querySelector(".stickyTop");
+    if(sticky){
+      const sr = sticky.getBoundingClientRect();
+      if(Number.isFinite(sr.bottom)) viewTop = Math.max(viewTop, sr.bottom + 4);
+    }
+
+    // pick the first bar whose TOP is closest to viewTop (not below by much)
     let bestIdx = 0;
-    let bestVisible = -1;
-    let bestTopDist = Infinity;
+    let bestTop = Infinity;
 
     for(const el of bars){
       const r = el.getBoundingClientRect();
+      if(r.bottom <= viewTop + 2) continue;
+      if(r.top >= viewBottom - 2) continue;
 
-      // intersection height with viewport
-      const visible = Math.max(0, Math.min(r.bottom, viewBottom) - Math.max(r.top, viewTop));
-      if(visible <= 0) continue;
-
-      const topDist = Math.abs(r.top - viewTop);
-
-      // prefer most visible; tie-breaker: closer to top
-      if(visible > bestVisible + 0.5 || (Math.abs(visible - bestVisible) <= 0.5 && topDist < bestTopDist)){
-        const v = parseInt(el.getAttribute("data-bar-idx") || el.dataset.barIdx || "0", 10);
-        bestIdx = Number.isFinite(v) ? v : 0;
-        bestVisible = visible;
-        bestTopDist = topDist;
+      // Prefer bars whose top is at/just below viewTop.
+      const top = r.top;
+      const score = (top >= viewTop - 6) ? (top - viewTop) : (viewTop - top) + 1000; // penalize ones above
+      if(score < bestTop){
+        bestTop = score;
+        const idx = parseInt(el.getAttribute("data-bar-idx") || el.dataset.barIdx || "0", 10);
+        bestIdx = Number.isFinite(idx) ? idx : 0;
       }
     }
-    return bestVisible >= 0 ? bestIdx : 0;
+
+    return bestIdx;
   }catch(_e){
     return 0;
   }
@@ -1102,7 +1370,16 @@ function startPracticeScroll(p){
       if(activeProject.activeSection !== visibleKey) activeProject.activeSection = visibleKey;
     }
     const firstVisibleBarIdx = getFirstVisibleBarIdxInActivePage();
-    activeProject.playback.seqStartOffset = computeSeqStartOffsetFromAnchor(activeProject, activeProject.playback.anchorPageKey, firstVisibleBarIdx);
+    if(activeProject.playback.anchorPageKey === "full"){
+      const t = getFirstVisibleFullPerfTarget();
+      if(t && t.secKey){
+        activeProject.playback.seqStartOffset = computeSeqStartOffsetFromAnchor(activeProject, t.secKey, t.barIdx);
+      }else{
+        activeProject.playback.seqStartOffset = 0;
+      }
+    }else{
+      activeProject.playback.seqStartOffset = computeSeqStartOffsetFromAnchor(activeProject, activeProject.playback.anchorPageKey, firstVisibleBarIdx);
+    }
   }
 
   const bpmRaw = (activeProject && typeof activeProject.bpm !== "undefined") ? activeProject.bpm : (els?.bpmInput ? parseFloat(els.bpmInput.value) : 90);
@@ -1282,11 +1559,111 @@ function getActiveRealPageEl(pageKey){
   return document.querySelector(`.page[data-page-key="${CSS.escape(pageKey)}"]:not([data-clone="1"])`);
 }
 
+
+function getFullPerfLineEl(secKey, barIdx){
+  try{
+    const fullPage = getActiveRealPageEl("full");
+    if(!fullPage) return null;
+    const esc = (window.CSS && CSS.escape) ? CSS.escape : (s)=>String(s).replace(/[^a-zA-Z0-9_\-]/g,'\\$&');
+    const s = esc(secKey);
+    return fullPage.querySelector(`.fullSection[data-sec-key="${s}"] .fullPerfLine[data-bar-idx="${barIdx}"]`);
+  }catch(_e){
+    return null;
+  }
+}
+
+
+function getFirstVisibleFullPerfTarget(){
+  // ✅ Choose the FULL performance line that starts at the TOP of the viewport (below sticky header).
+  // This prevents skipping the first lyric line of a section (and avoids "missing section 2").
+  try{
+    const fullPage = getActiveRealPageEl("full");
+    if(!fullPage) return null;
+
+    const scroller = findVerticalScroller(fullPage) || document.scrollingElement;
+    const isInner = (scroller && scroller !== document.body && scroller !== document.documentElement && scroller !== document.scrollingElement);
+    const vr = isInner ? scroller.getBoundingClientRect() : { top: 0, bottom: window.innerHeight };
+    let viewTop = vr.top;
+    const viewBottom = vr.bottom;
+
+    // account for sticky header inside full page
+    const sticky = fullPage.querySelector(".stickyTop");
+    if(sticky){
+      const sr = sticky.getBoundingClientRect();
+      if(Number.isFinite(sr.bottom)) viewTop = Math.max(viewTop, sr.bottom + 4);
+    }
+
+    const lines = Array.from(fullPage.querySelectorAll(".fullPerfLine[data-bar-idx]"));
+    if(!lines.length) return null;
+
+    let best = null;
+    let bestScore = Infinity;
+
+    for(const el of lines){
+      const r = el.getBoundingClientRect();
+      if(r.bottom <= viewTop + 2) continue;
+      if(r.top >= viewBottom - 2) continue;
+
+      const secEl = el.closest(".fullSection");
+      const secKey = secEl ? (secEl.dataset.secKey || secEl.getAttribute("data-sec-key")) : null;
+
+      const idx = parseInt(el.getAttribute("data-bar-idx") || el.dataset.barIdx || "0", 10);
+      const barIdx = Number.isFinite(idx) ? idx : 0;
+
+      // Prefer the line whose top is at/just below viewTop.
+      const top = r.top;
+      const score = (top >= viewTop - 6) ? (top - viewTop) : (viewTop - top) + 1000;
+      if(score < bestScore){
+        bestScore = score;
+        best = { secKey: secKey || null, barIdx };
+      }
+    }
+
+    // Fallback: if nothing matched (rare), return the first line
+    if(!best){
+      const el = lines[0];
+      const secEl = el.closest(".fullSection");
+      const secKey = secEl ? (secEl.dataset.secKey || secEl.getAttribute("data-sec-key")) : null;
+      const idx = parseInt(el.getAttribute("data-bar-idx") || el.dataset.barIdx || "0", 10);
+      best = { secKey: secKey || null, barIdx: Number.isFinite(idx) ? idx : 0 };
+    }
+
+    return best;
+  }catch(_e){
+    return null;
+  }
+}
+
+
+function flashBeatOnAllFullPerfLines(beatInBar){
+  try{
+    const fullPage = getActiveRealPageEl("full");
+    if(!fullPage) return;
+
+    const lines = fullPage.querySelectorAll(".fullPerfLine");
+    lines.forEach(line=>{
+      const qs = line.querySelectorAll(".q");
+      if(qs && qs.length >= 4){
+        qs.forEach(q=>q.classList.remove("flash"));
+        const t = qs[beatInBar];
+        if(t) t.classList.add("flash");
+      }
+    });
+
+    setTimeout(()=>{
+      const full2 = getActiveRealPageEl("full");
+      if(!full2) return;
+      full2.querySelectorAll(".q.flash").forEach(q=>q.classList.remove("flash"));
+    }, 90);
+  }catch(_e){}
+}
+
+
 function clearOldActiveBar(){
   if(lastActiveBarKey == null) return;
   const oldPage = getActiveRealPageEl(lastActiveBarKey);
   if(oldPage){
-    oldPage.querySelectorAll(".bar.barActive").forEach(el=>el.classList.remove("barActive"));
+    oldPage.querySelectorAll(".bar.barActive, .fullPerfLine.barActive").forEach(el=>el.classList.remove("barActive"));
     oldPage.querySelectorAll(".beat.flash").forEach(el=>el.classList.remove("flash"));
   }
 }
@@ -1297,7 +1674,7 @@ function setActiveBarDOM(pageKey, barIdx){
   const page = getActiveRealPageEl(pageKey);
   if(!page) return null;
 
-  const bar = page.querySelector(`.bar[data-bar-idx="${barIdx}"]`);
+  const bar = page.querySelector(`.bar[data-bar-idx="${barIdx}"], .fullPerfLine[data-bar-idx="${barIdx}"]`);
   if(!bar) return null;
 
   bar.classList.add("barActive");
@@ -1357,13 +1734,23 @@ function flashBeatOnBar(barEl, beatInBar){
   setTimeout(()=>beats.forEach(b=>b.classList.remove("flash")), 90);
 }
 
+function flashBeatOnFullPerfLine(lineEl, beatInBar){
+  if(!lineEl) return;
+  const qs = lineEl.querySelectorAll('.q');
+  if(!qs || qs.length < 4) return;
+  qs.forEach(q=>q.classList.remove('flash'));
+  const t = qs[beatInBar];
+  if(t) t.classList.add('flash');
+  setTimeout(()=>qs.forEach(q=>q.classList.remove('flash')), 90);
+}
+
 function flashBeatOnAllBars(pageKey, beatInBar){
   const page = getActiveRealPageEl(pageKey);
   if(!page) return;
 
   page.querySelectorAll(".bar.barActive").forEach(b=>b.classList.remove("barActive"));
 
-  const bars = page.querySelectorAll(".bar");
+  const bars = page.querySelectorAll(".bar, .fullPerfLine");
   bars.forEach(bar=>{
     const beats = bar.querySelectorAll(".beat");
     if(beats && beats.length >= 4){
@@ -1536,18 +1923,42 @@ function syncHighlightAndScroll(pageKey, globalBarIdx, beatInBar, seqOffset=0){
 
   const safeBeat = Math.max(0, Math.min(3, beatInBar|0));
 
-  // FULL page doesn't participate in autoscroll highlighting
-  if(pageKey === "full" && autoScrollOn){
-    // if user is on FULL while autoscrolling, jump to first text section if possible
-    const seq = getPlaySequence(p);
-    if(seq.length){
-      gotoSectionKey(p, seq[0].secKey, "auto");
-      pageKey = p.activeSection;
-      globalBarIdx = 0;
-    }else{
+  // ✅ FULL Song View participates in highlighting + scrolling (preview layer),
+  // but we never auto-swipe away from FULL while user is on it.
+  if(pageKey === "full"){
+    if(!autoScrollOn){
+      flashBeatOnAllFullPerfLines(safeBeat);
       return;
     }
-  }else if(pageKey === "full"){
+
+    const seq = getPlaySequence(p);
+    if(!seq.length){
+      flashBeatOnAllFullPerfLines(safeBeat);
+      return;
+    }
+
+    const base = (Number.isFinite(+seqOffset) ? (+seqOffset) : 0);
+    const idx = (((base + globalBarIdx) % seq.length) + seq.length) % seq.length;
+    const target = seq[idx];
+    if(!target) return;
+
+    const barEl = getFullPerfLineEl(target.secKey, target.barIdx);
+    if(!barEl) return;
+
+    clearOldActiveBar();
+    barEl.classList.add("barActive");
+    lastActiveBarKey = "full";
+    lastActiveBarIdx = target.barIdx;
+
+    flashBeatOnFullPerfLine(barEl, safeBeat);
+
+    if(safeBeat === 0){
+      const token = `full:${target.secKey}:${target.barIdx}`;
+      if(token !== lastAutoScrollToken){
+        lastAutoScrollToken = token;
+        requestAnimationFrame(()=>scrollBarIntoView(barEl));
+      }
+    }
     return;
   }
 
@@ -2300,7 +2711,7 @@ function syncSectionCardsFromProject(p){
       if(g) pill.classList.add(g);
     }
 
-    const beats = computeBeats(val);
+    const beats = computeBeats(pickBeatLineFromBar(p, val));
     const beatEls = wrap.querySelectorAll(".beat");
     for(let i=0;i<4;i++){
       if(beatEls[i]) beatEls[i].innerHTML = escapeHtml(beats[i] || "");
@@ -2391,6 +2802,86 @@ if(hs.has(up)){ j--; continue; }
   updateRhymes("");
 }
 
+// ✅ Universal rhyme refresh for ANY textarea (cards + full sections)
+function rhymeSeedFromCardTextarea(p, secKey, idx, ta){
+  try{
+    const sec = p?.sections?.[secKey];
+    if(!sec) return "";
+    const text = ta?.value || "";
+    const caret = ta?.selectionStart || 0;
+    const beatIdx = caretBeatIndex(text, caret);
+    const b = computeBeats(text);
+
+    let prevText = "";
+    if(beatIdx > 0){
+      prevText = b[beatIdx-1] || "";
+    }else{
+      const prevBar = sec.bars && sec.bars[idx-1];
+      if(prevBar && prevBar.text){
+        const pb = computeBeats(prevBar.text);
+        prevText = pb[3] || pb[2] || pb[1] || pb[0] || "";
+      }
+    }
+    return lastWord(prevText);
+  }catch(_e){
+    return "";
+  }
+}
+
+let _rhymeTick = 0;
+function refreshRhymesFromActiveTextarea(ta){
+  try{
+    const p = getActiveProject();
+    if(!p || !ta) return;
+
+    // Full section editor (SRP-style)
+    if(ta.classList?.contains("fullSectionEditor") && ta.dataset?.secEditor){
+      updateRhymesFromSectionCaret(p, ta.dataset.secEditor, ta);
+      return;
+    }
+
+    // Old single full editor (if present)
+    if(ta.id === "fullEditor"){
+      updateRhymesFromFullCaret(ta);
+      return;
+    }
+
+    // Card textarea
+    const secKey = ta.dataset?.sec;
+    const idxStr = ta.dataset?.idx;
+    if(secKey != null && idxStr != null){
+      const idx = Math.max(0, parseInt(idxStr,10) || 0);
+      const seed = rhymeSeedFromCardTextarea(p, secKey, idx, ta);
+      updateRhymes(seed);
+      return;
+    }
+  }catch(_e){}
+}
+
+function scheduleRhymeRefresh(ta){
+  const my = ++_rhymeTick;
+  requestAnimationFrame(()=>{
+    if(my !== _rhymeTick) return;
+    refreshRhymesFromActiveTextarea(ta);
+    updateDockForKeyboard();
+  syncDockHeightVar();
+  });
+}
+
+// Capture-level listeners so rhyme dock can't "break" if a render path forgets to wire events.
+document.addEventListener("focusin", (e)=>{
+  const ta = e.target;
+  if(ta && ta.tagName === "TEXTAREA") scheduleRhymeRefresh(ta);
+}, true);
+document.addEventListener("click", (e)=>{
+  const ta = e.target;
+  if(ta && ta.tagName === "TEXTAREA") scheduleRhymeRefresh(ta);
+}, true);
+document.addEventListener("keyup", (e)=>{
+  const ta = e.target;
+  if(ta && ta.tagName === "TEXTAREA") scheduleRhymeRefresh(ta);
+}, true);
+
 /***********************
 ✅ CAROUSEL PAGER (wrap) — dynamic pages
 ***********************/
@@ -2435,6 +2926,34 @@ function setSectionBarsFromText(p, key, rawText){
 
   sec.bars = (blocks.length ? blocks : [""]).map(txt => ({ text: txt }));
 }
+
+
+function renderFullPerfForSection(p, key, perfEl){
+  if(!perfEl) return;
+  const sec = p.sections[key];
+  const bars = (sec?.bars || []);
+  perfEl.innerHTML = "";
+
+  bars.forEach((bar, idx)=>{
+    const raw = String(bar?.text ?? "");
+    const lineText = pickPerfLyricLine(p, raw);
+    const beats = computeBeats(lineText);
+
+    const line = document.createElement("div");
+    line.className = "fullPerfLine";
+    line.dataset.barIdx = String(idx);
+    line.setAttribute("data-bar-idx", String(idx));
+
+    line.innerHTML = `
+      <span class="q q0" data-q="0">${escapeHtml(beats[0]||"")}</span>
+      <span class="q q1" data-q="1">${escapeHtml(beats[1]||"")}</span>
+      <span class="q q2" data-q="2">${escapeHtml(beats[2]||"")}</span>
+      <span class="q q3" data-q="3">${escapeHtml(beats[3]||"")}</span>
+    `;
+    perfEl.appendChild(line);
+  });
+}
+
 
 function renderFullSongFlow(p, mount){
   mount.innerHTML = "";
@@ -2492,6 +3011,8 @@ function renderFullSongFlow(p, mount){
       clearTimeout(tmr);
       tmr = setTimeout(()=>{
         setSectionBarsFromText(p, key, body.value || "");
+        // keep FULL performance view in sync
+        try{ renderFullPerfForSection(p, key, perf); }catch(_e){}
         syncSectionCardsFromProject(p);
         touchProject(p);
       }, 180);
@@ -2525,6 +3046,12 @@ function renderFullSongFlow(p, mount){
     btnRow.appendChild(delBtn);
     block.appendChild(hdr);
     block.appendChild(body);
+
+    const perf = document.createElement("div");
+    perf.className = "fullPerfView";
+    perf.dataset.secPerf = key;
+    renderFullPerfForSection(p, key, perf);
+    block.appendChild(perf);
     block.appendChild(btnRow);
     mount.appendChild(block);
   }
@@ -2931,7 +3458,7 @@ function renderSectionBarsInto(p, sectionKey, mountEl){
 
     const n = countSyllablesLine(bar.text||"");
     const glow = syllGlowClass(n);
-    const beats = computeBeats(bar.text||"");
+    const beats = computeBeats(pickBeatLineFromBar(p, bar.text||""));
 
     wrap.innerHTML = `
       <div class="barTop">
@@ -2999,6 +3526,7 @@ function renderSectionBarsInto(p, sectionKey, mountEl){
     ta.addEventListener("focus", ()=>{
       refreshRhymesForCaret();
       updateDockForKeyboard();
+  syncDockHeightVar();
     });
     ta.addEventListener("click", refreshRhymesForCaret);
     ta.addEventListener("keyup", refreshRhymesForCaret);
@@ -3017,7 +3545,7 @@ function renderSectionBarsInto(p, sectionKey, mountEl){
       const g = syllGlowClass(newN);
       if(g) syllPill.classList.add(g);
 
-      const bb = computeBeats(text);
+      const bb = computeBeats(pickBeatLineFromBar(p, text));
       for(let i=0;i<4;i++){
         beatEls[i].innerHTML = escapeHtml(bb[i]||"");
       }
@@ -3180,12 +3708,20 @@ const mountEl = pageEl ? pageEl.querySelector(".sectionMount") : null;
       }
     }
 
+    // update FULL preview for this section (if FULL page is mounted)
+    try{
+      const fullPage = document.querySelector(`.page[data-page-key="full"]:not([data-clone="1"])`);
+      const perf = fullPage?.querySelector(`.fullSection[data-sec-key="${key}"] .fullPerfView`);
+      if(perf) renderFullPerfForSection(p, key, perf);
+    }catch(_e){}
+
     playSeqCache.updatedAt = null;
   };
 
   const refreshRhymes = (key, ta) => {
     updateRhymesFromSectionCaret(p, key, ta);
     updateDockForKeyboard();
+  syncDockHeightVar();
   };
 
   editors.forEach((ta)=>{
@@ -3404,6 +3940,7 @@ if(els.bpm) els.bpm.value = p.bpm || 95;
 
   if(els.statusText) els.statusText.textContent = " ";
   updateDockForKeyboard();
+  syncDockHeightVar();
   updateRecordButtonUI();
   updateDrumButtonsUI();
   updateAutoScrollBtn();
@@ -3641,27 +4178,53 @@ function attachPullToRefresh(scrollEl, onRefresh){
   let startX = 0;
   let tracking = false;
   let pulled = false;
+  let startT = 0;
+  let startTarget = null;
 
-  const THRESH = 110; // px - "firm pull"
-  const MAX_X = 60;   // ignore diagonal/horizontal drags
+  const THRESH = 280; // px - harder pull
+  const MAX_X = 70;   // ignore diagonal/horizontal drags
+  const MIN_MS = 320; // must be a deliberate pull
 
-  const isTypingEl = (el)=>{
+  const isInteractive = (el)=>{
     if(!el) return false;
     const tag = (el.tagName || "").toLowerCase();
-    if(tag === "textarea" || tag === "input") return true;
-    if(el.isContentEditable) return true;
+    if(tag === "button" || tag === "select" || tag === "label") return true;
+    if(el.closest){
+      if(el.closest(".rhymeDock,.dockHideBtn,.chip")) return true;
+    }
     return false;
   };
 
+  const isTextInput = (el)=>{
+    if(!el) return false;
+    const tag = (el.tagName || "").toLowerCase();
+    return (tag === "textarea" || tag === "input" || el.isContentEditable);
+  };
+
+  const targetScrollTop = (el)=>{
+    try{
+      if(!el) return 0;
+      if(typeof el.scrollTop === "number") return el.scrollTop || 0;
+    }catch(_){}
+    return 0;
+  };
+
   scrollEl.addEventListener("touchstart", (e)=>{
-    if(isTypingEl(e.target)) return;
-    if(scrollEl.scrollTop > 0) return;
     const t = e.touches && e.touches[0];
     if(!t) return;
+
+    if((scrollEl.scrollTop || 0) > 0) return;
+    if(isInteractive(e.target)) return;
+
+    if(isTextInput(e.target) && document.activeElement === e.target) return;
+    if(isTextInput(e.target) && targetScrollTop(e.target) > 0) return;
+
     tracking = true;
     pulled = false;
+    startT = Date.now();
     startY = t.clientY;
     startX = t.clientX;
+    startTarget = e.target || null;
   }, { passive:true });
 
   scrollEl.addEventListener("touchmove", (e)=>{
@@ -3669,14 +4232,21 @@ function attachPullToRefresh(scrollEl, onRefresh){
     const t = e.touches && e.touches[0];
     if(!t) return;
 
+    if((scrollEl.scrollTop || 0) > 0){ tracking = false; return; }
+    if(isTextInput(startTarget) && targetScrollTop(startTarget) > 0){ tracking = false; return; }
+
     const dy = t.clientY - startY;
     const dx = Math.abs(t.clientX - startX);
 
     if(dx > MAX_X) { tracking = false; return; }
-    if(dy > THRESH){
+    if(dy <= 0) { tracking = false; return; }
+
+    if(dy > 10) e.preventDefault();
+
+    if(dy > THRESH && (Date.now() - startT) >= MIN_MS){
       pulled = true;
     }
-  }, { passive:true });
+  }, { passive:false });
 
   scrollEl.addEventListener("touchend", ()=>{
     if(tracking && pulled){
@@ -3685,15 +4255,22 @@ function attachPullToRefresh(scrollEl, onRefresh){
     }
     tracking = false;
     pulled = false;
+    startTarget = null;
+  }, { passive:true });
+
+  scrollEl.addEventListener("touchcancel", ()=>{
+    tracking = false;
+    pulled = false;
+    startTarget = null;
   }, { passive:true });
 }
-
 
 /***********************
 ✅ boot
 ***********************/
 (async function boot(){
   setDockHidden(loadDockHidden());
+  syncDockHeightVar();
   document.body.classList.toggle("headerCollapsed", loadHeaderCollapsed());
   relocateMiniCard();
   autoScrollOn = loadAutoScroll();
