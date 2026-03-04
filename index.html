@@ -38,7 +38,7 @@
       --hlGreen:#39FF14;
     }
 
-    html, body{ height:100%; overscroll-behavior-y: none; }
+    html, body{ height:100%; overscroll-behavior-y: auto; }
     body{
       margin:0;
       overflow:hidden;
@@ -87,7 +87,7 @@
   align-items:center;
   justify-content:space-between;
   gap:10px;
-  padding:0 2px;
+      padding:0 2px;
   margin:0 0 8px;
   position:sticky;
   top:0;
@@ -407,17 +407,18 @@
       left:0; right:0; bottom:0;
       top:var(--headerH, 220px);
       overflow:hidden;
-      padding:10px 10px 26px;
+      padding:10px 10px 10px;
     }
 
-    #bars{ overscroll-behavior-y: contain; 
+    #bars{ overscroll-behavior-y: auto;
       height:100%;
       overflow-y:auto;
       -webkit-overflow-scrolling:touch;
       display:flex;
       flex-direction:column;
       gap:10px;
-    }
+      padding-bottom: clamp(18px, calc(var(--dockH, 0px) + 18px + env(safe-area-inset-bottom)), 180px);
+      }
 
     .toast{
       position:fixed;
@@ -553,7 +554,7 @@
       justify-content:space-between;
       margin-bottom:8px;
       gap:10px;
-    }
+      }
     .barLeft{
       display:flex;
       align-items:center;
@@ -661,7 +662,7 @@
       display:grid;
       grid-template-columns:repeat(4,1fr);
       gap:10px;
-    }
+      }
     .beat{
       min-height:70px;
       border-radius:16px;
@@ -689,13 +690,43 @@
       font-size:15px;
     }
 /* SRP-style full view: one continuous scroll (no nested scrolling window) */
+.page[data-page-key="full"]{ background:#fff; padding-bottom:0; }
+
 .page[data-page-key="full"] .fullSongFlow{
   padding: 12px 12px 16px;
   background:#fff;
   border-radius:18px;
-  margin: 10px 10px 14px;
+  margin: 10px 10px 0;
   box-shadow:0 10px 26px rgba(0,0,0,.08);
+  /* keep the bottom from showing a big gray slab when content is short */  /* clear the rhyme dock without creating a huge empty scroll tail */
+  padding-bottom: 16px;
 }
+
+/* ✅ FULL song autoscroll performance view (4-quarter highlight like cards, but reads like a lyric line) */
+.fullPerfView{
+  margin-top:10px;
+  padding: 6px 0 0;
+}
+.fullPerfLine{
+  display:flex;
+  gap:6px;
+  align-items:flex-start;
+  margin: 6px 0;
+}
+.fullPerfLine .q{
+  flex:1 1 0;
+  padding:2px 4px;
+  border-radius:10px;
+  font-weight:1000;
+  overflow-wrap:anywhere;
+}
+.fullPerfLine .q.flash{
+  background:var(--hl) !important;
+  box-shadow:0 0 0 4px rgba(255,230,106,.35);
+}
+body:not(.autoScrollOn) .fullPerfView{ display:none; }
+body.autoScrollOn .fullSectionEditor{ display:none; }
+
 
 .pageTitlePill.sectionPill{
   width:min(300px, 62%);
@@ -714,7 +745,7 @@
       width:100%;
       /* ✅ Let the OUTER panel scroll (prevents “scroll twice” on mobile) */
       height:auto;
-      min-height:520px;
+      min-height:180px;
 
       resize:vertical;
       padding:12px;
@@ -749,7 +780,7 @@
   display:flex;
   align-items:center;
   gap:10px;
-  margin-bottom:10px;
+      margin-bottom:10px;
 }
 .fullSectionHeader .line{
   flex:1;
@@ -793,7 +824,7 @@
   display:flex;
   justify-content:center;
   gap:10px;
-  margin-top:10px;
+      margin-top:10px;
 }
 
 
@@ -964,7 +995,8 @@
     </div>
 
     <div class="miniCard">
-      <div style="display:flex;align-items:baseline;justify-content:space-between;gap:10px;">
+      <div style="display:flex;align-items:baseline;justify-content:space-between;gap:10px;
+      ">
         <div style="font-size:11px;font-weight:1000;color:var(--muted);text-transform:uppercase;letter-spacing:.6px;">Recording</div>
         <div id="recHint" style="font-size:13px;font-weight:1000;max-width:65%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">voice + metronome</div>
       </div>
@@ -997,7 +1029,7 @@
   (function(){
     const repo = (location.pathname.split("/").filter(Boolean)[0] || "");
     const base = repo ? ("/" + repo) : "";
-    const v = 'SHARED_20260303_AUTOSCROLL_START_CARD_IN_VIEW_FIX_v12';
+    const v = 'SHARED_20260303_BSP_FULLFIX_v17';
 
     const man = document.getElementById("appManifest");
     if(man) man.href = base + "/manifest.webmanifest?v=" + encodeURIComponent(v);
