@@ -1063,6 +1063,22 @@ function renderRhymes(words){
     .join("");
 }
 
+function closeRhymeAndKeyboard(){
+  try{
+    const ae = document.activeElement;
+    if(ae && ae.tagName === "TEXTAREA") ae.blur();
+  }catch(_e){}
+  try{
+    updateRhymes("");
+  }catch(_e){}
+  try{
+    updateDockForKeyboard();
+    syncDockHeightVar();
+  }catch(_e){}
+}
+
+
+
 document.addEventListener("click", (e)=>{
   const chip = e.target.closest(".rhymeChip");
   if(!chip) return;
@@ -2765,7 +2781,12 @@ function updateRhymesFromSectionCaret(p, key, ta){
     const caret = ta.selectionStart || 0;
     const before = textNow.slice(0, caret);
 
-    let baseLine = pickPrevLyricLine(before);
+    // ✅ We need the *previous* bar/line, not the current line the caret is on.
+    // So, exclude the current (possibly partial) line from the "before" text.
+    const cut = before.lastIndexOf("\n");
+    const beforePrevLine = (cut >= 0) ? before.slice(0, cut) : "";
+
+    let baseLine = pickPrevLyricLine(beforePrevLine);
 
     if(!baseLine){
       const order = getActivePageOrder(p).filter(k=>k!=="full");
@@ -2785,25 +2806,59 @@ function updateRhymesFromSectionCaret(p, key, ta){
 }
 
 function updateRhymesFromFullCaret(fullTa){
-  if(!fullTa) return;
-  const text = fullTa.value || "";
-  const caret = fullTa.selectionStart || 0;
-  const before = text.slice(0, caret);
-  const lines = before.replace(/\r/g,"").split("\n");
+  try{
+    if(!fullTa) return;
 
-  let j = lines.length - 2;
-  while(j >= 0){
-    const line = (lines[j] ?? "");
-    const trimmed = line.trim();
-    if(!trimmed){ j--; continue; }
-    const up = trimmed.toUpperCase();
-  const hs = buildHeadingSet(getActiveProject());
-if(hs.has(up)){ j--; continue; }
-    updateRhymes(lastWord(trimmed));
-    return;
+    const p = getActiveProject();
+    const hs = buildHeadingSet(p);
+
+    const isChordLine = (line) => {
+      const t = (line||"").trim();
+      if(!t) return true;
+      if(/^[-_]{3,}$/.test(t)) return true;
+
+      const cleaned = t.replace(/[\[\]\(\)\{\}]/g,"").trim();
+      const toks = cleaned.split(/\s+/).filter(Boolean);
+      if(!toks.length) return true;
+
+      const chordRe = /^(\d+)?[A-G](?:#|b)?(?:m|maj|min|dim|aug|sus|add)?\d*(?:\/[A-G](?:#|b)?)?$/i;
+      let chordish = 0;
+      for(const tok of toks){
+        if(tok === "|" || tok === "/"){ chordish++; continue; }
+        if(chordRe.test(tok)){ chordish++; continue; }
+      }
+      return chordish === toks.length && toks.length >= 2;
+    };
+
+    const pickPrevLyricLine = (text) => {
+      const lines = (text||"").replace(/\r/g,"").split("\n");
+      for(let i=lines.length-1; i>=0; i--){
+        const raw = lines[i] ?? "";
+        const t = raw.trim();
+        if(!t) continue;
+        const up = t.toUpperCase();
+        if(hs.has(up)) continue;
+        if(isChordLine(t)) continue;
+        return t;
+      }
+      return "";
+    };
+
+    const textNow = fullTa.value || "";
+    const caret = fullTa.selectionStart || 0;
+    const before = textNow.slice(0, caret);
+
+    // ✅ Exclude the current line the caret is on (even if partial).
+    const cut = before.lastIndexOf("\n");
+    const beforePrevLine = (cut >= 0) ? before.slice(0, cut) : "";
+
+    const baseLine = pickPrevLyricLine(beforePrevLine);
+    updateRhymes(lastWord(baseLine));
+  }catch(_e){
+    updateRhymes("");
   }
-  updateRhymes("");
 }
+
 
 // ✅ Universal rhyme refresh for ANY textarea (cards + full sections)
 function rhymeSeedFromCardTextarea(p, secKey, idx, ta){
@@ -3200,6 +3255,9 @@ function setActiveSectionFromIdx(p, idx){
   if(p.activeSection !== key){
     p.activeSection = key;
     touchProject(p);
+
+    // ✅ Close rhyme panel + keyboard when swiping to a new page
+    closeRhymeAndKeyboard();
 
     lastAutoScrollToken = null;
     clearAllPracticeAndActive();
@@ -4206,9 +4264,9 @@ function attachPullToRefresh(scrollEl, onRefresh){
 
   // Tuned to feel like SRP: must be at top edge, deliberate pull,
   // but not so hard that it feels broken.
-  const THRESH = 105; // px
+  const THRESH = 90; // px (slightly more sensitive)
   const MAX_X = 70;   // ignore diagonal/horizontal drags
-  const MIN_MS = 80; // must be a deliberate pull
+  const MIN_MS = 60; // must be a deliberate pull (slightly quicker)
 
   const isInteractive = (el)=>{
     if(!el) return false;
