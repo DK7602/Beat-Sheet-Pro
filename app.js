@@ -49,6 +49,7 @@ window.addEventListener("resize", ()=>syncHeaderHeightVar());
 /***********************
 ✅ remembers last textarea user typed in (mobile fix)
 ***********************/
+  
 let lastTextarea = null;
 document.addEventListener("focusin", (e)=>{
   const t = e.target;
